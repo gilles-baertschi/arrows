@@ -1,0 +1,4 @@
+type Numbered a = (Int, a)
+
+myDefinition :: Int -> String
+myDefinition = show
