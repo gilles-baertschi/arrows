@@ -4,7 +4,7 @@ module Parser.Primitives where
 
 import Control.Monad.Combinators.Expr
 import Control.Monad.State
-import Data.Text (Text)
+import Data.Text hiding (elem)
 import Data.Void
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
@@ -13,6 +13,8 @@ import qualified Text.Megaparsec.Char.Lexer as L
 type Parser = Parsec Void Text
 
 type ParserWithState s = StateT s Parser
+
+type ParserWithDoubleState s t = StateT s (StateT t Parser)
 
 newLineP :: Parser ()
 newLineP = L.space space1 (L.skipLineComment "--") (L.skipBlockComment "{-" "-}")
@@ -29,6 +31,9 @@ symbol = L.symbol spaceP
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
+liftParens :: ParserWithState s a -> ParserWithState s a
+liftParens = between (lift $ symbol "(") (lift $ symbol ")")
+
 parensWithState :: ParserWithState s a -> ParserWithState s a
 parensWithState = between (lift $ symbol "(") (lift $ symbol ")")
 
@@ -44,21 +49,31 @@ signedIntegerP = L.signed spaceP $ lexeme L.decimal
 signedFloatP :: Parser Double
 signedFloatP = L.signed spaceP $ lexeme L.float
 
-nameP :: Parser String
-nameP = lexeme $ (:) <$> letterChar <*> many alphaNumChar
+-- nameP :: Parser String
+-- nameP = lexeme $ (:) <$> letterChar <*> many alphaNumChar
 
 lowerCaseNameP :: Parser String
-lowerCaseNameP = lexeme $ (:) <$> lowerChar <*> many alphaNumChar
+lowerCaseNameP = lexeme $ (:) <$> lowerChar <*> many alphaNumChar >>= notKeyword
 
 upperCaseNameP :: Parser String
-upperCaseNameP = lexeme $ (:) <$> upperChar <*> many alphaNumChar
+upperCaseNameP = lexeme $ (:) <$> upperChar <*> many alphaNumChar >>= notKeyword
 
-binary :: Text -> (a -> a -> a) -> Operator Parser a
-binary name f = InfixL (f <$ symbol name)
+notKeyword :: String -> Parser String
+notKeyword name = do
+    when (name `elem` keywords) $ fail "not expecting keyword"
+    return name
 
-prefix, postfix :: Text -> (a -> a) -> Operator Parser a
-prefix name f = Prefix (f <$ symbol name)
-postfix name f = Postfix (f <$ symbol name)
+-- specialNameP :: Parser String
+-- specialNameP = lexeme $ (:) <$> upperChar <*> many (satisfy (\c -> isPunctuation c || isSymbol c))
+
+binaryL, binaryR, binaryN :: Text -> Parser (a -> a -> a) -> Operator Parser a
+binaryL name f = InfixL (f <* symbol name)
+binaryR name f = InfixR (f <* symbol name)
+binaryN name f = InfixN (f <* symbol name)
+
+prefix, postfix :: Text -> Parser (a -> a) -> Operator Parser a
+prefix name f = Prefix (f <* symbol name)
+postfix name f = Postfix (f <* symbol name)
 
 binaryWithState :: Text -> (a -> a -> a) -> Operator (ParserWithState s) a
 binaryWithState name f = InfixL (f <$ lift (symbol name))
@@ -66,3 +81,6 @@ binaryWithState name f = InfixL (f <$ lift (symbol name))
 prefixWithState, postfixWithState :: Text -> (a -> a) -> Operator (ParserWithState s) a
 prefixWithState name f = Prefix (f <$ lift (symbol name))
 postfixWithState name f = Postfix (f <$ lift (symbol name))
+
+keywords :: [String]
+keywords = ["where", "instance", "class", "first", "second", "left", "right", "const", "***", "&&&", "+++", "|||", ",", "|"]

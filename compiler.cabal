@@ -68,9 +68,9 @@ executable compiler
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
-    build-depends:    base ^>=4.17.2.1, text, megaparsec, parser-combinators, mtl, lens
+    build-depends:    base ^>=4.17.2.1, text, megaparsec, parser-combinators, mtl, lens, Unique, sort
 
-    other-modules:    Parser.Primitives, Parser.Program, Parser.Types, Parser.Values, Ast 
+    other-modules:    Parser.Primitives, Parser.Program, Parser.Types, Parser.Values, Ast, Checker.Names, Checker.Types, Helpers
 
     -- Directories containing source files.
     hs-source-dirs:   app

@@ -1,4 +1,26 @@
 type Numbered a = (Int, a)
 
+type List a = (() | (a, List a))
+type Id a b = undefined
+type String = List Char
+
+instance Show String where
+    show = undefined
+
+class Show a where
+    show :: a -> String
+
+instance (Show a) => Show (Numbered a) where
+    show = snd >>> show
+
+toUpper :: String -> String
+toUpper = undefined
+
+fst :: (a, b) -> a
+fst = undefined
+
+snd :: (a, b) -> b
+snd = undefined
+
 myDefinition :: Int -> String
-myDefinition = show
+myDefinition = show >>> toUpper

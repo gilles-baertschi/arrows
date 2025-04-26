@@ -1,5 +1,7 @@
 module Main where
 
+import Checker.Names
+import Checker.Types
 import Data.Text (pack)
 import Parser.Primitives
 import Parser.Program
