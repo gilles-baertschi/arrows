@@ -3,32 +3,23 @@ module Helpers where
 import Ast
 import Control.Monad
 import Control.Monad.State
+import Data.List
 import Parser.Primitives
 
-getAlias :: String -> ParserWithState Program TypeAlias
+getAlias :: Name -> ParserWithState Program TypeAlias
 getAlias name = gets $ head . filter ((name ==) . aliasName) . aliases
 
 -- getDefinition :: String -> ParserWithState Program Definition
 -- getDefinition name = gets $ head . filter ((name ==) . definitionName) . definitions
 
-getTypeFromName :: String -> ParserWithState Program ReferentialType
+getTypeFromName :: Name -> ParserWithState Program ReferentialType
 getTypeFromName name = do
     fromDefinitions <- gets $ map definitionType . filter ((name ==) . definitionName) . definitions
     fromClasses <- gets $ map snd . filter ((name ==) . fst) . typeClassMembers <=< typeClasses
-    -- instaceMembersWithName <- gets (filter (instanceMembers) . instances)
     return $ head $ fromDefinitions ++ fromClasses
 
--- getInstanceMembersWithTypes :: ParserWithState Program [(String, ReferentialType, Value)]
--- getInstanceMembersWithTypes = do
---    instancesWithClasses <- getInstancesWithClasses
---    let result = _a == map (\(typeClass, correspondingInstance) -> zipWith _b (sortOn fst (typeClassMembers typeClass)) (sortOn fst (instanceMembers correspondingInstance))) instancesWithClasses
-
---   (map (\(typeClass, correspondingInstance) -> map (\(referentialType, name) -> (referentialType, name, head filter ((name ==) . snd)) (instanceMembers correspondingInstance))) (typeClassMembers typeClass)) <$> getInstancesWithClasses
-
--- getInstancesWithClasses :: ParserWithState Program [(TypeClass, Instance)]
--- getInstancesWithClasses = do
---    allClasses <- gets typeClasses
---    gets $ map (\x -> (head $ filter ((instanceClassName x ==) . typeClassName) allClasses, x)) . instances
+getInstances :: Name -> ParserWithState Program [Instance]
+getInstances name = gets $ filter ((name ==) . instanceClassName) . instances
 
 addTypeVariabel :: ParserWithDoubleState [Type] Program Type
 addTypeVariabel = do
@@ -45,7 +36,7 @@ getOffsetFromValue value = case value of
     (IntLiteral offset _) -> offset
     (CharLiteral offset _) -> offset
     (EmptyTupleLiteral offset) -> offset
-    (DefinedValue offset _) -> offset
+    (DefinedValue (Name offset _)) -> offset
     (ArrowComposition offset _ _) -> offset
     (ArrowConstant offset _) -> offset
     (ArrowFirst offset _) -> offset
@@ -63,10 +54,21 @@ increaseReferences (ReferentialType t references) index = ReferentialType (incre
   where
     increase (Product x y) = Product (increase x) (increase y)
     increase (Sum x y) = Sum (increase x) (increase y)
-    increase (AliasReference offset name arguments) = AliasReference offset name $ map increase arguments
+    increase (AliasReference name arguments) = AliasReference name $ map increase arguments
     increase (TypeReference i) = TypeReference (i + index)
-    increase (AliasExtention offset arguments) = AliasExtention offset $ map increase arguments
+    increase (AliasExtention i arguments) = AliasExtention (i + index) $ map increase arguments
+    increase (AnyType i arguments) = AnyType (i + index) arguments
     increase x = x
+
+toAnyTypeReferences :: ReferentialType -> ReferentialType
+toAnyTypeReferences (ReferentialType t references) = ReferentialType t (zipWith toAnyType [0 ..] references)
+  where
+    toAnyType index (Product x y) = Product (toAnyType index x) (toAnyType index y)
+    toAnyType index (Sum x y) = Sum (toAnyType index x) (toAnyType index y)
+    toAnyType index (AliasReference name arguments) = AliasReference name $ map (toAnyType index) arguments
+    toAnyType index (AliasExtention offset arguments) = AliasExtention offset $ map (toAnyType index) arguments
+    toAnyType index (ForAllInstances classesWithNames) = AnyType index classesWithNames
+    toAnyType _ x = x
 
 insertType :: ReferentialType -> ReferentialType -> Int -> ReferentialType
 insertType (ReferentialType outerMainType outerOtherTypes) nonIncreasedInsertedTypes index = ReferentialType outerMainType $ replace index insertedMainType outerOtherTypes ++ insertedOtherTypes
@@ -80,3 +82,22 @@ replace i x xs = before ++ [x] ++ after
     after = case rest of
         [] -> []
         (_ : after') -> after'
+
+displayReferentialType :: ReferentialType -> String
+displayReferentialType (ReferentialType t references) = display t
+  where
+    display :: Type -> String
+    display (Product x y) = "(" ++ display x ++ ", " ++ display y ++ ")"
+    display (Sum x y) = "(" ++ display x ++ " | " ++ display y ++ ")"
+    display Bool = "Bool"
+    display Float = "Float"
+    display Int = "Int"
+    display Char = "Char"
+    display EmptyTuple = "()"
+    display (ForAllInstances classNames) = "[" ++ intercalate ", " (map nameString classNames) ++ "]"
+    display (AnyType _ classNames) = "[" ++ intercalate " | " (map nameString classNames) ++ "]"
+    display (AliasReference name arguments) = nameString name ++ " " ++ unwords (map display arguments)
+    display (AliasExtention index extendedArguments) = case references !! index of
+        (AliasReference name coreArguments) -> display $ AliasReference name $ coreArguments ++ extendedArguments
+        _ -> undefined
+    display (TypeReference index) = display $ references !! index

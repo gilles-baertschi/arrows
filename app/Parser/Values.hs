@@ -1,19 +1,36 @@
-module Parser.Values (valueP, instanceP) where
+{-# LANGUAGE TupleSections #-}
+
+module Parser.Values (valueP, instanceP, definitionP) where
 
 import Ast
 import Control.Monad
 import Control.Monad.Combinators.Expr
 import Data.Functor
+import Data.Text (pack)
 import Parser.Primitives
 import Parser.Types
 import Text.Megaparsec
+import Text.Megaparsec.Char (char)
 import qualified Text.Megaparsec.Char.Lexer as L
 
+definitionP :: Parser Definition
+definitionP = nonIndented p
+  where
+    p = do
+        name <- lowerCaseNameP
+        _ <- symbol "::"
+        referentialType <- typeP
+        _ <- newLineP
+        _ <- symbol $ pack $ nameString name
+        _ <- symbol "="
+        value <- valueP
+        _ <- newLineP
+        return $ Definition name referentialType value
+
 instanceP :: Parser Instance
-instanceP = L.nonIndented newLineP (L.indentBlock newLineP p)
+instanceP = nonIndented (L.indentBlock newLineP p)
   where
     member = do
-        -- _ <- newLineP
         memberName <- lowerCaseNameP
         _ <- symbol "="
         memberValue <- valueP
@@ -24,8 +41,6 @@ instanceP = L.nonIndented newLineP (L.indentBlock newLineP p)
         nameOfClass <- upperCaseNameP
         instancedType <- typeWithExistingConstraintsP constraints
         _ <- "where"
-        -- _ <- newLineP
-        -- members <- some member
         return $ L.IndentSome Nothing (return . Instance instancedType nameOfClass) member
 
 valueP :: Parser Value
@@ -54,7 +69,16 @@ compilerDefinedP :: Parser Value
 compilerDefinedP = CompilerDefined <$> getOffset <* symbol "undefined"
 
 definedValueP :: Parser Value
-definedValueP = DefinedValue <$> getOffset <*> lowerCaseNameP
+definedValueP = DefinedValue <$> lowerCaseNameP
+
+sumLiteralP :: Parser Value
+sumLiteralP = do
+    offset <- getOffset
+    (boolChoice, value) <- left <|> right
+    return $ SumLiteral offset boolChoice value
+  where
+    left = between (char '(') (char '|') ((False,) <$> valueP)
+    right = between (char '|') (char ')') ((True,) <$> valueP)
 
 valueTermP :: Parser Value
 valueTermP =
@@ -66,14 +90,15 @@ valueTermP =
         , intP
         , charP
         , try definedValueP
+        , try sumLiteralP
         , parens valueP
         ]
 
 valueOperatorTable :: [[Operator Parser Value]]
 valueOperatorTable =
     [ [binaryL "," (ProductLiteral <$> getOffset)]
-    , [binaryL "|" (SumLiteral <$> getOffset)]
-    ,
+    , -- , [binaryL "|" (SumLiteral <$> getOffset)]
+
         [ prefix "first" (ArrowFirst <$> getOffset)
         , prefix "second" (ArrowSecond <$> getOffset)
         , prefix "left" (ArrowLeft <$> getOffset)

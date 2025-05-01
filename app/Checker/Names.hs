@@ -4,46 +4,135 @@ import Ast
 import Control.Monad
 import Control.Monad.State
 import Data.Functor
+import Data.List.Unique
 import Helpers
 import Parser.Primitives
 import Text.Megaparsec
 
-checkNameSafety :: ParserWithState Program ()
-checkNameSafety = do
-    (Program _ _ programDefinitions programAliases) <- get
-    mapM_ (checkTypeNameSafety . definitionType) programDefinitions
-    mapM_ (checkTypeNameSafety . aliasType) programAliases
-    mapM_ (checkValueNameSafety . definitionValue) programDefinitions
+data Names = Names {classNames :: [Name], aliasNames :: [Name], valueNames :: [Name]}
 
-checkTypeNameSafety :: ReferentialType -> ParserWithState Program ()
-checkTypeNameSafety referentialType@(ReferentialType t references) = check t >> mapM check references $> ()
+checkNameSafety :: ParserWithState Program ()
+checkNameSafety = void $ runStateT f (Names [] [] [])
   where
-    check :: Type -> ParserWithState Program ()
+    f = do
+        (Program programTypeClasses programInstances programDefinitions programAliases) <- lift get
+        _ <- putPossibleNames
+        mapM_ assertInstanceNameSafety programInstances
+        mapM_ (assertTypeNameSafety . definitionType) programDefinitions
+        mapM_ (assertTypeNameSafety . aliasType) programAliases
+        mapM_ (assertTypeNameSafety . instanceType) programInstances
+        mapM_ (assertTypeNameSafety . snd) $ concatMap typeClassMembers programTypeClasses
+        mapM_ (assertValueNameSafety . definitionValue) programDefinitions
+        mapM_ (assertValueNameSafety . snd) $ concatMap instanceMembers programInstances
+
+putPossibleNames :: ParserWithDoubleState Names Program ()
+putPossibleNames = putPossibleClassNames >> putPossibleAliasNames >> putPossibleValueNames
+
+putPossibleClassNames :: ParserWithDoubleState Names Program ()
+putPossibleClassNames = do
+    allClassNames <- lift $ gets $ map typeClassName . typeClasses
+    mapM_ f allClassNames
+  where
+    f name = do
+        assertNewName name
+        existingClassNames <- gets classNames
+        modify (\names -> names{classNames = name : existingClassNames})
+
+putPossibleAliasNames :: ParserWithDoubleState Names Program ()
+putPossibleAliasNames = do
+    allAliasNames <- lift $ gets $ map aliasName . aliases
+    mapM_ f allAliasNames
+  where
+    f name = do
+        assertNewName name
+        existingAliasNames <- gets aliasNames
+        modify (\names -> names{aliasNames = name : existingAliasNames})
+
+putPossibleValueNames :: ParserWithDoubleState Names Program ()
+putPossibleValueNames = do
+    allClassMemberNames <- lift $ gets $ map fst . typeClassMembers <=< typeClasses
+    allDefinitionNames <- lift $ gets $ map definitionName . definitions
+    mapM_ f (allClassMemberNames ++ allDefinitionNames)
+  where
+    f name = do
+        assertNewName name
+        existingValueNames <- gets valueNames
+        modify (\names -> names{valueNames = name : existingValueNames})
+
+--    foldM f [] classes
+--  where
+-- f :: [Name] -> TypeClass -> ParserWithState Program [Name]
+--    f names (TypeClass name _) =
+--      if name `elem` names
+--        then fail ("multiple definitions for " ++ nameString name)
+--      else return (name : names)
+
+assertClassNameExist :: Name -> ParserWithDoubleState Names Program ()
+assertClassNameExist name = do
+    exists <- gets $ (name `elem`) . classNames
+    unless exists $ lift $ fail $ "no class named " ++ nameString name
+
+assertAliasNameExist :: Name -> ParserWithDoubleState Names Program ()
+assertAliasNameExist name = do
+    exists <- gets $ (name `elem`) . aliasNames
+    unless exists $ lift $ fail $ "no alias named " ++ nameString name
+
+assertValueNameExist :: Name -> ParserWithDoubleState Names Program ()
+assertValueNameExist name = do
+    exists <- gets $ (name `elem`) . valueNames
+    unless exists $ lift $ fail $ "no definition for " ++ nameString name
+
+doesNameExist :: Name -> ParserWithDoubleState Names Program Bool
+doesNameExist name = (choice [assertClassNameExist name, assertAliasNameExist name, assertValueNameExist name] $> True) <|> return False
+
+assertNewName :: Name -> ParserWithDoubleState Names Program ()
+assertNewName name = do
+    exists <- doesNameExist name
+    when exists $ fail $ "multiple definitions for " ++ nameString name
+
+assertTypeNameSafety :: ReferentialType -> ParserWithDoubleState Names Program ()
+assertTypeNameSafety referentialType@(ReferentialType t references) = do
+    check t
+    mapM_
+        ( \reference -> case reference of
+            (AliasReference _ _) -> return ()
+            _ -> check reference
+        )
+        references
+  where
+    check :: Type -> ParserWithDoubleState Names Program ()
     check (Product x y) = check x >> check y
     check (Sum x y) = check x >> check y
-    check (AliasReference offset name arguments) = do
-        possibleNames <- gets (map aliasName . aliases)
-        unless (name `elem` possibleNames) $ lift (setOffset offset) >> fail ("no alias named " ++ name)
-        requiredArgumentCount <- aliasArgumentCount <$> getAlias name
-        unless (requiredArgumentCount == length arguments) $ lift (setOffset offset) >> fail ("expected " ++ show requiredArgumentCount ++ " arguments but recieved " ++ show (length name))
+    check (AliasExtention index extendedArguments) = case references !! index of
+        (AliasReference name@(Name offset _) coreArguments) -> do
+            assertAliasNameExist name
+            let arguments = coreArguments ++ extendedArguments
+            requiredArgumentCount <- aliasArgumentCount <$> lift (getAlias name)
+            unless (requiredArgumentCount == length arguments) $ do
+                lift $ setOffset offset
+                fail $ "expected " ++ show (requiredArgumentCount - length coreArguments) ++ " arguments but recieved " ++ show (length extendedArguments)
+            mapM_ check arguments
+        _ -> undefined
+    check (AliasReference name@(Name offset _) arguments) = do
+        assertAliasNameExist name
+        requiredArgumentCount <- aliasArgumentCount <$> lift (getAlias name)
+        unless (requiredArgumentCount == length arguments) $ do
+            lift $ setOffset offset
+            fail $ "expected " ++ show requiredArgumentCount ++ " arguments but recieved " ++ show (length arguments)
         mapM_ check arguments
-    check (TypeReference i) = do
-        check $ mainType $ resolveReference referentialType i
+    check (TypeReference index) = do
+        check $ mainType $ resolveReference referentialType index
     check (ForAllInstances classes) = do
-        possibleNames <- gets (map typeClassName . typeClasses)
-        mapM_ (\(offset, name) -> unless (name `elem` possibleNames) $ lift (setOffset offset) >> fail ("no class named " ++ name)) classes
+        mapM_ assertClassNameExist classes
     check _ = return ()
 
-checkValueNameSafety :: Value -> ParserWithState Program ()
-checkValueNameSafety = check
+assertValueNameSafety :: Value -> ParserWithDoubleState Names Program ()
+assertValueNameSafety = check
   where
-    check :: Value -> ParserWithState Program ()
+    check :: Value -> ParserWithDoubleState Names Program ()
     check (ProductLiteral _ x y) = check x >> check y
-    check (SumLiteral _ x y) = check x >> check y
-    check (DefinedValue offset name) = do
-        possibleDefinitionNames <- gets $ map definitionName . definitions
-        possibleInstanceNames <- gets $ map fst . typeClassMembers <=< typeClasses
-        unless (name `elem` (possibleDefinitionNames ++ possibleInstanceNames)) $ lift (setOffset offset) >> fail ("no definition for " ++ name)
+    check (SumLiteral _ _ x) = check x
+    check (DefinedValue name) = assertValueNameExist name
     check (ArrowComposition _ x y) = check x >> check y
     check (ArrowConstant _ x) = check x
     check (ArrowFirst _ x) = check x
@@ -55,3 +144,24 @@ checkValueNameSafety = check
     check (TriplePlus _ x y) = check x >> check y
     check (TripleBar _ x y) = check x >> check y
     check _ = return ()
+
+assertInstanceNameSafety :: Instance -> ParserWithDoubleState Names Program ()
+assertInstanceNameSafety (Instance _ className members) = do
+    assertClassNameExist className
+    let memberNames = map fst members
+    requiredMemberNames <- lift $ gets $ map fst . typeClassMembers . head . filter ((className ==) . typeClassName) . typeClasses
+    unless (allUnique memberNames) $ do
+        setOffset $ nameOffset className
+        fail "multiple definitions for same member of instance"
+    mapM_
+        ( \name -> unless (name `elem` memberNames) $ do
+            setOffset $ nameOffset className
+            fail $ nameString name ++ " was not defined in an instance of " ++ nameString className
+        )
+        requiredMemberNames
+    mapM_
+        ( \name -> unless (name `elem` requiredMemberNames) $ do
+            setOffset $ nameOffset name
+            fail $ nameString name ++ " is not part of the class " ++ nameString className
+        )
+        memberNames

@@ -1,4 +1,4 @@
-module Ast (ParsingOffset, Program (..), TypeClass (..), Instance (..), Definition (..), TypeAlias (..), Value (..), Type (..), ReferentialType (..), resolveReference, makeTypeReferential) where
+module Ast (ParsingOffset, Name (..), Program (..), TypeClass (..), Instance (..), Definition (..), TypeAlias (..), Value (..), Type (..), ReferentialType (..), resolveReference, makeTypeReferential) where
 
 import Control.Monad.State
 import Data.List
@@ -6,27 +6,30 @@ import Data.List
 data Program = Program {typeClasses :: [TypeClass], instances :: [Instance], definitions :: [Definition], aliases :: [TypeAlias]}
     deriving (Show, Read, Eq, Ord)
 
-data TypeClass = TypeClass {typeClassName :: String, typeClassMembers :: [(String, ReferentialType)]}
+data TypeClass = TypeClass {typeClassName :: Name, typeClassMembers :: [(Name, ReferentialType)]}
     deriving (Show, Read, Eq, Ord)
 
-data Instance = Instance {instanceType :: ReferentialType, instanceClassName :: String, instanceMembers :: [(String, Value)]}
+data Instance = Instance {instanceType :: ReferentialType, instanceClassName :: Name, instanceMembers :: [(Name, Value)]}
     deriving (Show, Read, Eq, Ord)
 
-data Definition = Definition {definitionName :: String, definitionType :: ReferentialType, definitionValue :: Value}
+data Definition = Definition {definitionName :: Name, definitionType :: ReferentialType, definitionValue :: Value}
     deriving (Show, Read, Eq, Ord)
 
-data TypeAlias = TypeAlias {aliasName :: String, aliasArgumentCount :: Int, aliasType :: ReferentialType}
+data TypeAlias = TypeAlias {aliasName :: Name, aliasArgumentCount :: Int, aliasType :: ReferentialType}
     deriving (Show, Read, Eq, Ord)
+
+data Name = Name {nameOffset :: ParsingOffset, nameString :: String}
+    deriving (Read, Ord)
 
 data Value
     = ProductLiteral ParsingOffset Value Value
-    | SumLiteral ParsingOffset Value Value
+    | SumLiteral ParsingOffset Bool Value
     | BoolLiteral ParsingOffset Bool
     | IntLiteral ParsingOffset Int
     | FloatLiteral ParsingOffset Double
     | CharLiteral ParsingOffset Char
     | EmptyTupleLiteral ParsingOffset
-    | DefinedValue ParsingOffset String
+    | DefinedValue Name
     | ArrowComposition ParsingOffset Value Value
     | ArrowConstant ParsingOffset Value
     | ArrowFirst ParsingOffset Value
@@ -59,12 +62,18 @@ data Type
     | Int
     | Char
     | EmptyTuple
-    | ForAllInstances [(ParsingOffset, String)]
-    | AnyType Int [(ParsingOffset, String)]
-    | AliasReference ParsingOffset String [Type]
+    | ForAllInstances [Name]
+    | AnyType Int [Name]
+    | AliasReference Name [Type]
     | AliasExtention Int [Type]
     | TypeReference Int
     deriving (Read, Eq, Ord, Show)
+
+instance Eq Name where
+    (Name _ x) == (Name _ y) = x == y
+
+instance Show Name where
+    show = show . nameString
 
 instance Eq ReferentialType where
     (ReferentialType mainTypeX otherTypesX) == (ReferentialType mainTypeY otherTypesY) = evalState (eq mainTypeX mainTypeY) (otherTypesX, otherTypesY)
@@ -79,12 +88,12 @@ instance Eq ReferentialType where
         eq (AliasExtention index arguments) y = do
             x <- gets $ (!! index) . fst
             case x of
-                (AliasReference offset nameX argumentsX) -> eq (AliasReference offset nameX (argumentsX ++ arguments)) y
+                (AliasReference nameX argumentsX) -> eq (AliasReference nameX (argumentsX ++ arguments)) y
                 _ -> return False
         eq x (AliasExtention index arguments) = do
             y <- gets $ (!! index) . fst
             case y of
-                (AliasReference offset nameY argumentsY) -> eq x (AliasReference offset nameY (argumentsY ++ arguments))
+                (AliasReference nameY argumentsY) -> eq x (AliasReference nameY (argumentsY ++ arguments))
                 _ -> return False
         eq (Product x1 x2) (Product y1 y2) = do
             eq1 <- eq x1 y1
@@ -94,15 +103,15 @@ instance Eq ReferentialType where
             eq1 <- eq x1 y1
             eq2 <- eq x2 y2
             return $ eq1 && eq2
-        eq (ForAllInstances classesWithNamesX) (ForAllInstances classesWithNamesY) = do
-            let classesX = sort $ map snd classesWithNamesX
-            let classesY = sort $ map snd classesWithNamesY
+        eq (ForAllInstances unsortedClassesX) (ForAllInstances unsortedClassesY) = do
+            let classesX = sort unsortedClassesX
+            let classesY = sort unsortedClassesY
             return $ classesX == classesY
-        eq (AnyType _ classesWithNamesX) (AnyType _ classesWithNamesY) = do
-            let classesX = sort $ map snd classesWithNamesX
-            let classesY = sort $ map snd classesWithNamesY
+        eq (AnyType _ unsortedClassesX) (AnyType _ unsortedClassesY) = do
+            let classesX = sort unsortedClassesX
+            let classesY = sort unsortedClassesY
             return $ classesX == classesY
-        eq (AliasReference _ nameX argumentsX) (AliasReference _ nameY argumentsY) = do
+        eq (AliasReference nameX argumentsX) (AliasReference nameY argumentsY) = do
             if nameX == nameY && length argumentsX == length argumentsY
                 then and <$> zipWithM eq argumentsX argumentsY
                 else return False

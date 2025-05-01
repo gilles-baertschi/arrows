@@ -13,20 +13,12 @@ import Parser.Primitives
 import Text.Megaparsec hiding (State)
 import qualified Text.Megaparsec.Char.Lexer as L
 
-data Constraint = Constraint {constrainedLocalName :: String, constrainedClassNames :: [(ParsingOffset, String)]}
+data Constraint = Constraint {constrainedLocalName :: Name, constrainedClassNames :: [Name]}
 
--- pItemList :: Parser (String, [String])
--- pItemList = L.nonIndented newLineP (L.indentBlock newLineP p)
--- where
--- p = do
--- header <- pItem
--- return (L.IndentMany Nothing (return . (header,)) pItem)
---
 classP :: Parser TypeClass
-classP = L.nonIndented newLineP (L.indentBlock newLineP p)
+classP = nonIndented (L.indentBlock newLineP p)
   where
     member constraints = do
-        -- _ <- newLineP
         memberName <- lowerCaseNameP
         _ <- symbol "::"
         memberType <- typeWithExistingConstraintsP constraints
@@ -35,25 +27,24 @@ classP = L.nonIndented newLineP (L.indentBlock newLineP p)
         _ <- symbol "class"
         maybeConstraints <- try (Just <$> typeConstraintsP) <|> return Nothing
         className <- upperCaseNameP
-        -- (localName, partialArguments) <- ((,) <$> lowerCaseNameP <*> return []) <|> parens ((,) <$> lowerCaseNameP <*> many lowerCaseNameP)
         localName <- lowerCaseNameP
-        unless (maybe True (all ((localName ==) . constrainedLocalName)) maybeConstraints) $ fail ("only " ++ localName ++ " allowed in constraints")
-        let constraints = fromMaybe [Constraint localName []] maybeConstraints
+        unless (maybe True (all ((localName ==) . constrainedLocalName)) maybeConstraints) $ fail ("only " ++ nameString localName ++ " allowed in constraints")
+        let constraints = mergeConstraints $ Constraint localName [className] : fromMaybe [] maybeConstraints
         _ <- symbol "where"
-        -- _ <- newLineP
-        -- members <- some $ member constraints
         return $ L.IndentSome Nothing (return . TypeClass className) (member constraints)
 
 aliasP :: Parser TypeAlias
-aliasP = do
-    _ <- symbol "type"
-    name <- upperCaseNameP
-    arguments <- many lowerCaseNameP
-    _ <- symbol "="
-    let argumentCount = length arguments
-    if allUnique arguments
-        then TypeAlias name argumentCount . toReferentialType <$> runStateT typeTailP (map (`Constraint` []) arguments)
-        else fail "several definitions for the same type variable"
+aliasP = nonIndented p
+  where
+    p = do
+        _ <- symbol "type"
+        name <- upperCaseNameP
+        arguments <- many lowerCaseNameP
+        _ <- symbol "="
+        let argumentCount = length arguments
+        if allUnique arguments
+            then TypeAlias name argumentCount . toReferentialType <$> runStateT typeTailP (map (`Constraint` []) arguments) <* newLineP
+            else fail "several definitions for the same type variable"
 
 typeP :: Parser ReferentialType
 typeP = typeWithExistingConstraintsP []
@@ -65,13 +56,17 @@ toReferentialType :: (Type, [Constraint]) -> ReferentialType
 toReferentialType (finalType, constraints) = ReferentialType finalType $ map (\(Constraint _ classNames) -> ForAllInstances classNames) constraints
 
 typeConstraintsP :: Parser [Constraint]
-typeConstraintsP = do
-    bindings <- parens (sepBy ((,,) <$> getOffset <*> upperCaseNameP <*> lowerCaseNameP) (symbol ",")) <* symbol "=>"
-    let allLocalNames = nub $ map (\(_, _, localName) -> localName) bindings
-    let bindingsWithLocalName name = map (\(offset, className, _) -> (offset, className)) $ filter (\(_, _, localName) -> name == localName) bindings
-    return $ map (\name -> Constraint name (bindingsWithLocalName name)) allLocalNames
+typeConstraintsP = mergeConstraints <$> parens (sepBy (flip Constraint . (: []) <$> upperCaseNameP <*> lowerCaseNameP) (symbol ",")) <* symbol "=>"
 
--- return (map ((`InstanceOf` []) . map (\(offset, className, _) -> (offset, className)) . constraintsWithLocalName) classNames, classNames)
+-- let allLocalNames = nub $ map constrainedClassNames bindings
+-- let bindingsWithLocalName name = map fst $ filter ((name ==) . snd) bindings
+-- return $ map (\name -> Constraint name (bindingsWithLocalName name)) allLocalNames
+
+mergeConstraints :: [Constraint] -> [Constraint]
+mergeConstraints constraints = map (\name -> Constraint name (constraintsWithLocalName name)) allLocalNames
+  where
+    allLocalNames = nub $ map constrainedLocalName constraints
+    constraintsWithLocalName name = concatMap constrainedClassNames $ filter ((name ==) . constrainedLocalName) constraints
 
 typeTailP :: ParserWithState [Constraint] Type
 typeTailP = makeExprParser typeTermP typeOperatorTable
@@ -84,7 +79,7 @@ typeTermP =
         , lift $ symbol "Int" $> Int
         , lift $ symbol "Float" $> Float
         , lift $ symbol "()" $> EmptyTuple
-        , AliasReference <$> getOffset <*> lift upperCaseNameP <*> many typeTailP
+        , AliasReference <$> lift upperCaseNameP <*> many typeTailP
         , constrainedTypeP
         , parensWithState typeTailP
         ]
@@ -93,13 +88,15 @@ constrainedTypeP :: ParserWithState [Constraint] Type
 constrainedTypeP = try $ do
     name <- lift lowerCaseNameP
     arguments <- many typeTailP
+    let result index = if not $ null arguments then AliasExtention index arguments else TypeReference index
     constraints <- get
     let maybeIndex = elemIndex name (map constrainedLocalName constraints)
     case maybeIndex of
         Nothing -> do
-            put $ constraints ++ [Constraint name []] -- ( ++ [InstanceOf [] []], translations ++ [name])
-            return $ AliasExtention (length constraints) arguments
-        Just index -> return $ AliasExtention index arguments
+            modify (++ [Constraint name []])
+            let index = length constraints
+            return $ result index
+        Just index -> return $ result index
 
 typeOperatorTable :: [[Operator (ParserWithState [Constraint]) Type]]
 typeOperatorTable =
@@ -108,7 +105,7 @@ typeOperatorTable =
             ( do
                 offset <- getOffset
                 _ <- lift (symbol "->")
-                return (\x y -> AliasReference offset "Id" [x, y])
+                return (\x y -> AliasReference (Name offset "Id") [x, y])
             )
         ]
     , [binaryWithState "," Product]

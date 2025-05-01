@@ -2,6 +2,7 @@
 
 module Parser.Primitives where
 
+import Ast
 import Control.Monad.Combinators.Expr
 import Control.Monad.State
 import Data.Text hiding (elem)
@@ -15,6 +16,9 @@ type Parser = Parsec Void Text
 type ParserWithState s = StateT s Parser
 
 type ParserWithDoubleState s t = StateT s (StateT t Parser)
+
+nonIndented :: Parser a -> Parser a
+nonIndented = L.nonIndented newLineP
 
 newLineP :: Parser ()
 newLineP = L.space space1 (L.skipLineComment "--") (L.skipBlockComment "{-" "-}")
@@ -52,11 +56,15 @@ signedFloatP = L.signed spaceP $ lexeme L.float
 -- nameP :: Parser String
 -- nameP = lexeme $ (:) <$> letterChar <*> many alphaNumChar
 
-lowerCaseNameP :: Parser String
-lowerCaseNameP = lexeme $ (:) <$> lowerChar <*> many alphaNumChar >>= notKeyword
+lowerCaseNameP :: Parser Name
+lowerCaseNameP = lexeme $ Name <$> getOffset <*> lowerCaseStringP
+  where
+    lowerCaseStringP = (:) <$> lowerChar <*> many alphaNumChar >>= notKeyword
 
-upperCaseNameP :: Parser String
-upperCaseNameP = lexeme $ (:) <$> upperChar <*> many alphaNumChar >>= notKeyword
+upperCaseNameP :: Parser Name
+upperCaseNameP = lexeme $ Name <$> getOffset <*> upperCaseStringP
+  where
+    upperCaseStringP = (:) <$> upperChar <*> many alphaNumChar >>= notKeyword
 
 notKeyword :: String -> Parser String
 notKeyword name = do
