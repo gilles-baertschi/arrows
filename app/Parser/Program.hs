@@ -8,17 +8,27 @@ import Parser.Primitives
 import Parser.Types
 import Parser.Values
 import Text.Megaparsec
+import Translator
 
 checkAll :: ParserWithState Program ()
 checkAll = checkNameSafety >> checkTypeSafety
 
-programP :: Parser Program
-programP = execStateT p (Program [] [] [] []) <* eof
+onlyProgramP :: Parser Program
+onlyProgramP = execStateT p (Program [] [] [] []) <* eof
   where
     p = do
         _ <- lift newLineP
         _ <- many $ choice [writeClassP, writeInstanceP, writeAliasP, writeDefinitionP]
         checkAll
+
+programP :: Parser String
+programP = evalStateT p (Program [] [] [] []) <* eof
+  where
+    p = do
+        _ <- lift newLineP
+        _ <- many $ choice [writeClassP, writeInstanceP, writeAliasP, writeDefinitionP]
+        checkAll
+        translate
 
 writeAliasP :: ParserWithState Program ()
 writeAliasP = do

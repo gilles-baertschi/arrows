@@ -1,12 +1,27 @@
-module Ast (ParsingOffset, Name (..), Program (..), TypeClass (..), Instance (..), Definition (..), TypeAlias (..), Value (..), Type (..), ReferentialType (..), resolveReference, makeTypeReferential) where
+module Ast (
+    ParsingOffset,
+    Name (..),
+    Program (..),
+    TypeClass (..),
+    Instance (..),
+    Definition (..),
+    TypeAlias (..),
+    Value (..),
+    TypeWithValue (..),
+    Type (..),
+    ReferentialType (..),
+    resolveReference,
+    makeTypeReferential,
+) where
 
 import Control.Monad.State
 import Data.List
+import Data.String
 
 data Program = Program {typeClasses :: [TypeClass], instances :: [Instance], definitions :: [Definition], aliases :: [TypeAlias]}
     deriving (Show, Read, Eq, Ord)
 
-data TypeClass = TypeClass {typeClassName :: Name, typeClassMembers :: [(Name, ReferentialType)]}
+data TypeClass = TypeClass {typeClassName :: Name, typeClassParents :: [Name], typeClassMembers :: [(Name, ReferentialType)]}
     deriving (Show, Read, Eq, Ord)
 
 data Instance = Instance {instanceType :: ReferentialType, instanceClassName :: Name, instanceMembers :: [(Name, Value)]}
@@ -15,11 +30,14 @@ data Instance = Instance {instanceType :: ReferentialType, instanceClassName :: 
 data Definition = Definition {definitionName :: Name, definitionType :: ReferentialType, definitionValue :: Value}
     deriving (Show, Read, Eq, Ord)
 
-data TypeAlias = TypeAlias {aliasName :: Name, aliasArgumentCount :: Int, aliasType :: ReferentialType}
+data TypeAlias = TypeAlias {aliasName :: Name, aliasArgumentCount :: Int, aliasType :: Maybe ReferentialType}
     deriving (Show, Read, Eq, Ord)
 
 data Name = Name {nameOffset :: ParsingOffset, nameString :: String}
     deriving (Read, Ord)
+
+instance IsString Name where
+    fromString = Name 0
 
 data Value
     = ProductLiteral ParsingOffset Value Value
@@ -30,6 +48,8 @@ data Value
     | CharLiteral ParsingOffset Char
     | EmptyTupleLiteral ParsingOffset
     | DefinedValue Name
+    | DefinedValueFromInstance Name Int
+    | Undefined ParsingOffset
     | ArrowComposition ParsingOffset Value Value
     | ArrowConstant ParsingOffset Value
     | ArrowFirst ParsingOffset Value
@@ -40,7 +60,29 @@ data Value
     | ArrowLeft ParsingOffset Value
     | TriplePlus ParsingOffset Value Value
     | TripleBar ParsingOffset Value Value
-    | CompilerDefined ParsingOffset
+    deriving (Read, Eq, Ord, Show)
+
+data TypeWithValue
+    = TypeWithProductLiteral Type TypeWithValue TypeWithValue
+    | TypeWithSumLiteral Type Bool TypeWithValue
+    | TypeWithBoolLiteral Type Bool
+    | TypeWithIntLiteral Type Int
+    | TypeWithFloatLiteral Type Double
+    | TypeWithCharLiteral Type Char
+    | TypeWithEmptyTupleLiteral Type
+    | TypeWithDefinedValue Type Name
+    | TypeWithDefinedValueFromInstance Type Name Int
+    | TypeWithUndefined Type
+    | TypeWithArrowComposition Type TypeWithValue TypeWithValue
+    | TypeWithArrowConstant Type TypeWithValue
+    | TypeWithArrowFirst Type TypeWithValue
+    | TypeWithArrowSecond Type TypeWithValue
+    | TypeWithTripleAsterisks Type TypeWithValue TypeWithValue
+    | TypeWithTripleAnd Type TypeWithValue TypeWithValue
+    | TypeWithArrowRight Type TypeWithValue
+    | TypeWithArrowLeft Type TypeWithValue
+    | TypeWithTriplePlus Type TypeWithValue TypeWithValue
+    | TypeWithTripleBar Type TypeWithValue TypeWithValue
     deriving (Read, Eq, Ord, Show)
 
 data ReferentialType = ReferentialType {mainType :: Type, otherTypes :: [Type]}
@@ -57,16 +99,17 @@ type ParsingOffset = Int
 data Type
     = Product Type Type
     | Sum Type Type
-    | Bool
-    | Float
-    | Int
-    | Char
-    | EmptyTuple
     | ForAllInstances [Name]
     | AnyType Int [Name]
     | AliasReference Name [Type]
     | AliasExtention Int [Type]
     | TypeReference Int
+    | ThisClass
+    --    | Bool
+    --    | Float
+    --    | Int
+    --    | Char
+    --    | EmptyTuple
     deriving (Read, Eq, Ord, Show)
 
 instance Eq Name where
@@ -115,4 +158,5 @@ instance Eq ReferentialType where
             if nameX == nameY && length argumentsX == length argumentsY
                 then and <$> zipWithM eq argumentsX argumentsY
                 else return False
+        eq ThisClass ThisClass = return True
         eq x y = return $ x == y

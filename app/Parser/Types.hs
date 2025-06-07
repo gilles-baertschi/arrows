@@ -21,17 +21,18 @@ classP = nonIndented (L.indentBlock newLineP p)
     member constraints = do
         memberName <- lowerCaseNameP
         _ <- symbol "::"
-        memberType <- typeWithExistingConstraintsP constraints
-        return (memberName, memberType)
+        (ReferentialType memberMainType memberOtherTypes) <- typeWithExistingConstraintsP constraints
+        return (memberName, ReferentialType memberMainType $ ThisClass : tail memberOtherTypes)
     p = do
         _ <- symbol "class"
         maybeConstraints <- try (Just <$> typeConstraintsP) <|> return Nothing
         className <- upperCaseNameP
         localName <- lowerCaseNameP
         unless (maybe True (all ((localName ==) . constrainedLocalName)) maybeConstraints) $ fail ("only " ++ nameString localName ++ " allowed in constraints")
+        let parents = constrainedLocalName <$> fromMaybe [] maybeConstraints
         let constraints = mergeConstraints $ Constraint localName [className] : fromMaybe [] maybeConstraints
         _ <- symbol "where"
-        return $ L.IndentSome Nothing (return . TypeClass className) (member constraints)
+        return $ L.IndentSome Nothing (return . TypeClass className parents) (member constraints)
 
 aliasP :: Parser TypeAlias
 aliasP = nonIndented p
@@ -43,20 +44,28 @@ aliasP = nonIndented p
         _ <- symbol "="
         let argumentCount = length arguments
         if allUnique arguments
-            then TypeAlias name argumentCount . toReferentialType <$> runStateT typeTailP (map (`Constraint` []) arguments) <* newLineP
+            then do
+                let termianlP = symbol "undefined" $> TypeAlias name argumentCount Nothing
+                let normalP = TypeAlias name argumentCount . Just . toReferentialType <$> runStateT (typeTailP True) (map (`Constraint` []) arguments)
+                (termianlP <|> normalP) <* newLineP
+            -- result <- symbol "undefined" $> TerminalTypeAlias name argumentCount <|> TypeAlias name argumentCount . toReferentialType <$> runStateT (typeTailP True) (map (`Constraint` []) arguments)
+            -- _ <- newLineP
+            -- return result
             else fail "several definitions for the same type variable"
 
 typeP :: Parser ReferentialType
 typeP = typeWithExistingConstraintsP []
 
 typeWithExistingConstraintsP :: [Constraint] -> Parser ReferentialType
-typeWithExistingConstraintsP constraints = toReferentialType <$> runStateT (((try (lift typeConstraintsP) >>= put) <|> return ()) >> typeTailP) constraints
+typeWithExistingConstraintsP constraints = toReferentialType <$> runStateT (((try (lift typeConstraintsP) >>= put) <|> return ()) >> typeTailP True) constraints
 
 toReferentialType :: (Type, [Constraint]) -> ReferentialType
 toReferentialType (finalType, constraints) = ReferentialType finalType $ map (\(Constraint _ classNames) -> ForAllInstances classNames) constraints
 
 typeConstraintsP :: Parser [Constraint]
-typeConstraintsP = mergeConstraints <$> parens (sepBy (flip Constraint . (: []) <$> upperCaseNameP <*> lowerCaseNameP) (symbol ",")) <* symbol "=>"
+typeConstraintsP = (((: []) <$> singleConstraintP) <|> (mergeConstraints <$> parens (sepBy singleConstraintP (symbol ",")))) <* symbol "=>"
+  where
+    singleConstraintP = flip Constraint . (: []) <$> upperCaseNameP <*> lowerCaseNameP
 
 -- let allLocalNames = nub $ map constrainedClassNames bindings
 -- let bindingsWithLocalName name = map fst $ filter ((name ==) . snd) bindings
@@ -68,26 +77,26 @@ mergeConstraints constraints = map (\name -> Constraint name (constraintsWithLoc
     allLocalNames = nub $ map constrainedLocalName constraints
     constraintsWithLocalName name = concatMap constrainedClassNames $ filter ((name ==) . constrainedLocalName) constraints
 
-typeTailP :: ParserWithState [Constraint] Type
-typeTailP = makeExprParser typeTermP typeOperatorTable
+typeTailP :: Bool -> ParserWithState [Constraint] Type
+typeTailP inParens = makeExprParser (typeTermP inParens) (typeOperatorTable inParens)
 
-typeTermP :: ParserWithState [Constraint] Type
-typeTermP =
+typeTermP :: Bool -> ParserWithState [Constraint] Type
+typeTermP inParens =
     choice
-        [ lift $ symbol "Bool" $> Bool
-        , lift $ symbol "Char" $> Char
-        , lift $ symbol "Int" $> Int
-        , lift $ symbol "Float" $> Float
-        , lift $ symbol "()" $> EmptyTuple
-        , AliasReference <$> lift upperCaseNameP <*> many typeTailP
-        , constrainedTypeP
-        , parensWithState typeTailP
+        [ -- lift $ symbol "Bool" $> AliasReference (Name "Bool" []
+          -- , lift $ symbol "Char" $> AliasReference "Char" []
+          -- , lift $ symbol "Int" $> AliasReference "Int" []
+          -- , lift $ symbol "Float" $> AliasReference "Float" []
+          -- , lift $ symbol "()" $> AliasReference "()" []
+          try $ AliasReference <$> lift upperCaseNameP <*> if inParens then many (try $ typeTailP False) else return []
+        , constrainedTypeP inParens
+        , parensWithState $ typeTailP True
         ]
 
-constrainedTypeP :: ParserWithState [Constraint] Type
-constrainedTypeP = try $ do
+constrainedTypeP :: Bool -> ParserWithState [Constraint] Type
+constrainedTypeP inParens = try $ do
     name <- lift lowerCaseNameP
-    arguments <- many typeTailP
+    arguments <- if inParens then many $ typeTailP False else return []
     let result index = if not $ null arguments then AliasExtention index arguments else TypeReference index
     constraints <- get
     let maybeIndex = elemIndex name (map constrainedLocalName constraints)
@@ -98,16 +107,19 @@ constrainedTypeP = try $ do
             return $ result index
         Just index -> return $ result index
 
-typeOperatorTable :: [[Operator (ParserWithState [Constraint]) Type]]
-typeOperatorTable =
-    [
-        [ InfixL
-            ( do
-                offset <- getOffset
-                _ <- lift (symbol "->")
-                return (\x y -> AliasReference (Name offset "Id") [x, y])
-            )
-        ]
-    , [binaryWithState "," Product]
-    , [binaryWithState "|" Sum]
-    ]
+typeOperatorTable :: Bool -> [[Operator (ParserWithState [Constraint]) Type]]
+typeOperatorTable inParens =
+    if inParens
+        then
+            [
+                [ InfixL
+                    ( do
+                        offset <- getOffset
+                        _ <- lift (symbol "->")
+                        return (\x y -> AliasReference (Name offset "Id") [x, y])
+                    )
+                ]
+            , [binaryWithState "," Product]
+            , [binaryWithState "|" Sum]
+            ]
+        else []

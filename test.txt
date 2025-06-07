@@ -1,17 +1,41 @@
 type Id a b = undefined
+type IO a b = undefined
 
-type List a = (() | (a, List a))
-type String = List Char
+type Bool = undefined
+type Int = undefined
+type Float = undefined
+type () = undefined
+type Char = undefined
 
-instance Show Int where
-    show = undefined
+class Arrow y where
+  id :: y a a
+  arr :: Id a b -> y a b
+  (>>>) :: (y a b, y b c) -> y a c
+  first :: y a b -> y (a, c) (b, c)
+  second :: y a b -> y (c, a) (c, b)
+  (***) :: (y a c, y b d) -> y (a, b) (c, d)
+  (&&&) :: (y a b, y a c) -> y a (b, c)
 
-class Show a where
-    show :: a -> String
+instance Arrow Id where
+    id = undefined
+    arr = undefined
+    (>>>) = undefined
+    first = undefined
+    second = undefined
+    (***) = undefined
+    (&&&) = undefined
 
-toUpper :: String -> String
-toUpper = undefined
+instance Arrow IO where
+    id = undefined
+    arr = undefined
+    (>>>) = undefined
+    first = undefined
+    second = undefined
+    (***) = undefined
+    (&&&) = undefined
 
-myDefinition :: (Show a) => Int -> a
-myDefinition = show
+putChar :: IO Char ()
+putChar = undefined
 
+main :: IO () ()
+main = (const 'A') >>> putChar

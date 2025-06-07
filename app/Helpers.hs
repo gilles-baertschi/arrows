@@ -16,7 +16,44 @@ getTypeFromName :: Name -> ParserWithState Program ReferentialType
 getTypeFromName name = do
     fromDefinitions <- gets $ map definitionType . filter ((name ==) . definitionName) . definitions
     fromClasses <- gets $ map snd . filter ((name ==) . fst) . typeClassMembers <=< typeClasses
+    -- fromInstances <- gets $ filter ((name ==) . fst) . instanceMembers <=< instances
     return $ head $ fromDefinitions ++ fromClasses
+
+getTypesFromName :: Name -> ParserWithState Program (Either ReferentialType [ReferentialType])
+getTypesFromName name = do
+    fromDefinition <- gets $ fmap definitionType . find ((name ==) . definitionName) . definitions
+    maybeClass <- gets $ find ((name `elem`) . map fst . typeClassMembers) . typeClasses
+    fromInstances <- case maybeClass of
+        Just (TypeClass className _ _) -> do
+            instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
+            definitionsForName <- concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
+            return $ map definitionType definitionsForName
+        -- map (\(_, referentialType, _) -> referentialType) . concatMap (filter (\(memberName, _, _) -> name == memberName)) <$> (gets (filter ((== className) . instanceClassName) . instances) >>= mapM getReferentialTypeMembers)
+        Nothing -> return []
+    return $ maybe (Right fromInstances) Left fromDefinition
+
+getDefinitionsFromName :: Name -> ParserWithState Program (Either Definition [Definition])
+getDefinitionsFromName name = do
+    fromDefinition <- gets $ find ((name ==) . definitionName) . definitions
+    maybeClass <- gets $ find ((name `elem`) . map fst . typeClassMembers) . typeClasses
+    fromInstances <- case maybeClass of
+        Just (TypeClass className _ _) -> do
+            instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
+            concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
+        -- map (\(_, referentialType, _) -> referentialType) . concatMap (filter (\(memberName, _, _) -> name == memberName)) <$> (gets (filter ((== className) . instanceClassName) . instances) >>= mapM getReferentialTypeMembers)
+        Nothing -> return []
+    return $ maybe (Right fromInstances) Left fromDefinition
+
+-- fromInstances <- case maybeClass of
+--    Just (TypeClass className members) -> do
+--         allDefinitionsFromInstances <- gets $ concatMap (\(Instance instanceType' _ members) -> map (instanceType', undefined) members) . filter ((== className) . instanceClassName) . instances
+--         return []
+--     Nothing -> return []
+-- mapM_
+--     ( \(insertedType, (name, value)) -> do
+--         referentialType <- getTypeFromName name
+--         assertReferentialType (insertType referentialType insertedType 0) value
+--     )
 
 getInstances :: Name -> ParserWithState Program [Instance]
 getInstances name = gets $ filter ((name ==) . instanceClassName) . instances
@@ -37,6 +74,7 @@ getOffsetFromValue value = case value of
     (CharLiteral offset _) -> offset
     (EmptyTupleLiteral offset) -> offset
     (DefinedValue (Name offset _)) -> offset
+    (DefinedValueFromInstance (Name offset _) _) -> offset
     (ArrowComposition offset _ _) -> offset
     (ArrowConstant offset _) -> offset
     (ArrowFirst offset _) -> offset
@@ -47,7 +85,7 @@ getOffsetFromValue value = case value of
     (ArrowLeft offset _) -> offset
     (TriplePlus offset _ _) -> offset
     (TripleBar offset _ _) -> offset
-    (CompilerDefined offset) -> offset
+    (Undefined offset) -> offset
 
 increaseReferences :: ReferentialType -> Int -> ReferentialType
 increaseReferences (ReferentialType t references) index = ReferentialType (increase t) (map increase references)
@@ -89,15 +127,82 @@ displayReferentialType (ReferentialType t references) = display t
     display :: Type -> String
     display (Product x y) = "(" ++ display x ++ ", " ++ display y ++ ")"
     display (Sum x y) = "(" ++ display x ++ " | " ++ display y ++ ")"
-    display Bool = "Bool"
-    display Float = "Float"
-    display Int = "Int"
-    display Char = "Char"
-    display EmptyTuple = "()"
-    display (ForAllInstances classNames) = "[" ++ intercalate ", " (map nameString classNames) ++ "]"
-    display (AnyType _ classNames) = "[" ++ intercalate " | " (map nameString classNames) ++ "]"
-    display (AliasReference name arguments) = nameString name ++ " " ++ unwords (map display arguments)
+    -- display Bool = "Bool"
+    -- display Float = "Float"
+    -- display Int = "Int"
+    -- display Char = "Char"
+    -- display EmptyTuple = "()"
+    display (ForAllInstances classNames) = "for all {" ++ intercalate ", " (map nameString classNames) ++ "}"
+    display (AnyType _ classNames) = "any {" ++ intercalate ", " (map nameString classNames) ++ "}"
+    display (AliasReference name arguments) = unwords (nameString name : map display arguments)
     display (AliasExtention index extendedArguments) = case references !! index of
         (AliasReference name coreArguments) -> display $ AliasReference name $ coreArguments ++ extendedArguments
         _ -> undefined
     display (TypeReference index) = display $ references !! index
+    display ThisClass = "this"
+
+getDefinitionsFromInstance :: Instance -> ParserWithState Program [Definition]
+getDefinitionsFromInstance (Instance insertedType className members) = do
+    (TypeClass _ _ classMembers) <- gets $ head . filter ((className ==) . typeClassName) . typeClasses
+    mapM
+        ( \((name, referentialType), value) -> do
+            return $ Definition name (insertType referentialType insertedType 0) value
+        )
+        $ zip (sortOn fst classMembers) (map snd $ sortOn fst members)
+
+addTypeToValue :: Type -> Value -> TypeWithValue
+addTypeToValue t (BoolLiteral _ x) = TypeWithBoolLiteral t x
+addTypeToValue t (IntLiteral _ x) = TypeWithIntLiteral t x
+addTypeToValue t (FloatLiteral _ x) = TypeWithFloatLiteral t x
+addTypeToValue t (CharLiteral _ x) = TypeWithCharLiteral t x
+addTypeToValue t (EmptyTupleLiteral _) = TypeWithEmptyTupleLiteral t
+addTypeToValue t (DefinedValue name) = TypeWithDefinedValue t name
+addTypeToValue t (DefinedValueFromInstance name index) = TypeWithDefinedValueFromInstance t name index
+addTypeToValue t (Undefined _) = TypeWithUndefined t
+addTypeToValue _ _ = undefined
+
+getTypeFromTypeWithValue :: TypeWithValue -> Type
+getTypeFromTypeWithValue (TypeWithProductLiteral t _ _) = t
+getTypeFromTypeWithValue (TypeWithSumLiteral t _ _) = t
+getTypeFromTypeWithValue (TypeWithBoolLiteral t _) = t
+getTypeFromTypeWithValue (TypeWithIntLiteral t _) = t
+getTypeFromTypeWithValue (TypeWithFloatLiteral t _) = t
+getTypeFromTypeWithValue (TypeWithCharLiteral t _) = t
+getTypeFromTypeWithValue (TypeWithEmptyTupleLiteral t) = t
+getTypeFromTypeWithValue (TypeWithDefinedValue t _) = t
+getTypeFromTypeWithValue (TypeWithDefinedValueFromInstance t _ _) = t
+getTypeFromTypeWithValue (TypeWithUndefined t) = t
+getTypeFromTypeWithValue (TypeWithArrowComposition t _ _) = t
+getTypeFromTypeWithValue (TypeWithArrowConstant t _) = t
+getTypeFromTypeWithValue (TypeWithArrowFirst t _) = t
+getTypeFromTypeWithValue (TypeWithArrowSecond t _) = t
+getTypeFromTypeWithValue (TypeWithTripleAsterisks t _ _) = t
+getTypeFromTypeWithValue (TypeWithTripleAnd t _ _) = t
+getTypeFromTypeWithValue (TypeWithArrowRight t _) = t
+getTypeFromTypeWithValue (TypeWithArrowLeft t _) = t
+getTypeFromTypeWithValue (TypeWithTriplePlus t _ _) = t
+getTypeFromTypeWithValue (TypeWithTripleBar t _ _) = t
+
+-- addTypeToValue t (ArrowComposition offset x y) = TypeWithArrowComposition t offset x y
+-- addTypeToValue t (ArrowConstant offset x) = TypeWithArrowConstant t offset x
+-- addTypeToValue t (ArrowFirst offset x) = TypeWithArrowFirst t offset x
+-- addTypeToValue t (ArrowSecond offset x) = TypeWithArrowSecond t offset x
+-- addTypeToValue t (TripleAsterisks offset x y) = TypeWithTripleAsterisks t offset x y
+-- addTypeToValue t (TripleAnd offset x y) = TypeWithTripleAnd t offset x y
+-- addTypeToValue t (ArrowRight offset x) = TypeWithArrowRight t offset x
+-- addTypeToValue t (ArrowLeft offset x) = TypeWithArrowLeft t offset x
+-- addTypeToValue t (TriplePlus offset x y) = TypeWithTriplePlus offset x y
+-- addTypeToValue t (TripleBar offset x y) = TypeWithTripleBar t offset x y
+--
+-- ProductLiteral ParsingOffset Value Value
+-- \| SumLiteral ParsingOffset Bool Value
+-- \| ArrowComposition ParsingOffset Value Value
+-- \| ArrowConstant ParsingOffset Value
+-- \| ArrowFirst ParsingOffset Value
+-- \| ArrowSecond ParsingOffset Value
+-- \| TripleAsterisks ParsingOffset Value Value
+-- \| TripleAnd ParsingOffset Value Value
+-- \| ArrowRight ParsingOffset Value
+-- \| ArrowLeft ParsingOffset Value
+-- \| TriplePlus ParsingOffset Value Value
+-- \| TripleBar ParsingOffset Value Value

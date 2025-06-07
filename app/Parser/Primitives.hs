@@ -5,6 +5,8 @@ module Parser.Primitives where
 import Ast
 import Control.Monad.Combinators.Expr
 import Control.Monad.State
+import Data.Char
+import Data.Functor
 import Data.Text hiding (elem)
 import Data.Void
 import Text.Megaparsec hiding (State)
@@ -59,20 +61,22 @@ signedFloatP = L.signed spaceP $ lexeme L.float
 lowerCaseNameP :: Parser Name
 lowerCaseNameP = lexeme $ Name <$> getOffset <*> lowerCaseStringP
   where
-    lowerCaseStringP = (:) <$> lowerChar <*> many alphaNumChar >>= notKeyword
+    lowerCaseStringP = (parens specialStringP <|> ((:) <$> lowerChar <*> many alphaNumChar)) >>= notKeyword
 
 upperCaseNameP :: Parser Name
 upperCaseNameP = lexeme $ Name <$> getOffset <*> upperCaseStringP
   where
-    upperCaseStringP = (:) <$> upperChar <*> many alphaNumChar >>= notKeyword
+    upperCaseStringP = (specialStringP <|> (:) <$> upperChar <*> many alphaNumChar) >>= notKeyword
 
 notKeyword :: String -> Parser String
 notKeyword name = do
     when (name `elem` keywords) $ fail "not expecting keyword"
     return name
 
--- specialNameP :: Parser String
--- specialNameP = lexeme $ (:) <$> upperChar <*> many (satisfy (\c -> isPunctuation c || isSymbol c))
+specialStringP :: Parser String
+specialStringP = lexeme $ some specialCharP <|> symbol "()" $> "()"
+  where
+    specialCharP = satisfy (\c -> (isPunctuation c || isSymbol c) && c /= '(' && c /= ')')
 
 binaryL, binaryR, binaryN :: Text -> Parser (a -> a -> a) -> Operator Parser a
 binaryL name f = InfixL (f <* symbol name)
@@ -91,4 +95,4 @@ prefixWithState name f = Prefix (f <$ lift (symbol name))
 postfixWithState name f = Postfix (f <$ lift (symbol name))
 
 keywords :: [String]
-keywords = ["where", "instance", "class", "first", "second", "left", "right", "const", "***", "&&&", "+++", "|||", ",", "|"]
+keywords = ["where", "instance", "class", "undefined", "->"] -- ["where", "instance", "class", "first", "second", "left", "right", "const", "***", "&&&", "+++", "|||", ",", "|"]
