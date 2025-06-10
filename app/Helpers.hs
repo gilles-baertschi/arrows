@@ -75,17 +75,20 @@ getOffsetFromValue value = case value of
     (EmptyTupleLiteral offset) -> offset
     (DefinedValue (Name offset _)) -> offset
     (DefinedValueFromInstance (Name offset _) _) -> offset
-    (ArrowComposition offset _ _) -> offset
-    (ArrowConstant offset _) -> offset
-    (ArrowFirst offset _) -> offset
-    (ArrowSecond offset _) -> offset
-    (TripleAsterisks offset _ _) -> offset
-    (TripleAnd offset _ _) -> offset
-    (ArrowRight offset _) -> offset
-    (ArrowLeft offset _) -> offset
-    (TriplePlus offset _ _) -> offset
-    (TripleBar offset _ _) -> offset
+    (UnaryArrowOperator _ offset _) -> offset
+    (BinaryArrowOperator _ offset _ _) -> offset
     (Undefined offset) -> offset
+
+-- (ArrowComposition offset _ _) -> offset
+-- (ArrowConstant offset _) -> offset
+-- (ArrowFirst offset _) -> offset
+-- (ArrowSecond offset _) -> offset
+-- (TripleAsterisks offset _ _) -> offset
+-- (TripleAnd offset _ _) -> offset
+-- (ArrowRight offset _) -> offset
+-- (ArrowLeft offset _) -> offset
+-- (TriplePlus offset _ _) -> offset
+-- (TripleBar offset _ _) -> offset
 
 increaseReferences :: ReferentialType -> Int -> ReferentialType
 increaseReferences (ReferentialType t references) index = ReferentialType (increase t) (map increase references)
@@ -159,29 +162,36 @@ addTypeToValue t (EmptyTupleLiteral _) = TypeWithEmptyTupleLiteral t
 addTypeToValue t (DefinedValue name) = TypeWithDefinedValue t name
 addTypeToValue t (DefinedValueFromInstance name index) = TypeWithDefinedValueFromInstance t name index
 addTypeToValue t (Undefined _) = TypeWithUndefined t
+addTypeToValue t@(Product xType yType) (ProductLiteral _ xValue yValue) = TypeWithProductLiteral t (addTypeToValue xType xValue) (addTypeToValue yType yValue)
+addTypeToValue t@(Sum xType yType) (SumLiteral _ boolChoice value) = TypeWithSumLiteral t boolChoice $ if boolChoice then addTypeToValue yType value else addTypeToValue xType value
 addTypeToValue _ _ = undefined
 
 getTypeFromTypeWithValue :: TypeWithValue -> Type
-getTypeFromTypeWithValue (TypeWithProductLiteral t _ _) = t
-getTypeFromTypeWithValue (TypeWithSumLiteral t _ _) = t
-getTypeFromTypeWithValue (TypeWithBoolLiteral t _) = t
-getTypeFromTypeWithValue (TypeWithIntLiteral t _) = t
-getTypeFromTypeWithValue (TypeWithFloatLiteral t _) = t
-getTypeFromTypeWithValue (TypeWithCharLiteral t _) = t
-getTypeFromTypeWithValue (TypeWithEmptyTupleLiteral t) = t
-getTypeFromTypeWithValue (TypeWithDefinedValue t _) = t
-getTypeFromTypeWithValue (TypeWithDefinedValueFromInstance t _ _) = t
-getTypeFromTypeWithValue (TypeWithUndefined t) = t
-getTypeFromTypeWithValue (TypeWithArrowComposition t _ _) = t
-getTypeFromTypeWithValue (TypeWithArrowConstant t _) = t
-getTypeFromTypeWithValue (TypeWithArrowFirst t _) = t
-getTypeFromTypeWithValue (TypeWithArrowSecond t _) = t
-getTypeFromTypeWithValue (TypeWithTripleAsterisks t _ _) = t
-getTypeFromTypeWithValue (TypeWithTripleAnd t _ _) = t
-getTypeFromTypeWithValue (TypeWithArrowRight t _) = t
-getTypeFromTypeWithValue (TypeWithArrowLeft t _) = t
-getTypeFromTypeWithValue (TypeWithTriplePlus t _ _) = t
-getTypeFromTypeWithValue (TypeWithTripleBar t _ _) = t
+getTypeFromTypeWithValue typeWithValue = case typeWithValue of
+    (TypeWithProductLiteral t _ _) -> t
+    (TypeWithSumLiteral t _ _) -> t
+    (TypeWithBoolLiteral t _) -> t
+    (TypeWithIntLiteral t _) -> t
+    (TypeWithFloatLiteral t _) -> t
+    (TypeWithCharLiteral t _) -> t
+    (TypeWithEmptyTupleLiteral t) -> t
+    (TypeWithDefinedValue t _) -> t
+    (TypeWithDefinedValueFromInstance t _ _) -> t
+    (TypeWithUndefined t) -> t
+    (TypeWithUnaryArrowOperator _ t _) -> t
+    (TypeWithBinaryArrowOperator _ t _ _) -> t
+
+-- getTypeFromTypeWithValue (TypeWithArr t _) = t
+-- getTypeFromTypeWithValue (TypeWithArrowComposition t _ _) = t
+-- getTypeFromTypeWithValue (TypeWithArrowConstant t _) = t
+-- getTypeFromTypeWithValue (TypeWithArrowFirst t _) = t
+-- getTypeFromTypeWithValue (TypeWithArrowSecond t _) = t
+-- getTypeFromTypeWithValue (TypeWithTripleAsterisks t _ _) = t
+-- getTypeFromTypeWithValue (TypeWithTripleAnd t _ _) = t
+-- getTypeFromTypeWithValue (TypeWithArrowRight t _) = t
+-- getTypeFromTypeWithValue (TypeWithArrowLeft t _) = t
+-- getTypeFromTypeWithValue (TypeWithTriplePlus t _ _) = t
+-- getTypeFromTypeWithValue (TypeWithTripleBar t _ _) = t
 
 -- addTypeToValue t (ArrowComposition offset x y) = TypeWithArrowComposition t offset x y
 -- addTypeToValue t (ArrowConstant offset x) = TypeWithArrowConstant t offset x

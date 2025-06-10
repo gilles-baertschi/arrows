@@ -14,19 +14,21 @@ checkAll :: ParserWithState Program ()
 checkAll = checkNameSafety >> checkTypeSafety
 
 onlyProgramP :: Parser Program
-onlyProgramP = execStateT p (Program [] [] [] []) <* eof
+onlyProgramP = execStateT p (Program [] [] [] [])
   where
     p = do
         _ <- lift newLineP
         _ <- many $ choice [writeClassP, writeInstanceP, writeAliasP, writeDefinitionP]
+        _ <- eof
         checkAll
 
 programP :: Parser String
-programP = evalStateT p (Program [] [] [] []) <* eof
+programP = evalStateT p (Program [] [] [] [])
   where
     p = do
         _ <- lift newLineP
         _ <- many $ choice [writeClassP, writeInstanceP, writeAliasP, writeDefinitionP]
+        _ <- eof
         checkAll
         translate
 

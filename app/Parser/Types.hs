@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parser.Types (typeP, aliasP, classP, typeConstraintsP, typeWithExistingConstraintsP, Constraint (..), typeTailP, toReferentialType) where
+module Parser.Types (typeP, aliasP, classP, typeConstraintsP, typeWithExistingConstraintsP, Constraint (..), typeTailP, toReferentialType, constrainedTypeP) where
 
 import Ast
 import Control.Monad.Combinators.Expr

@@ -10,7 +10,7 @@ import Data.Text (pack)
 import Parser.Primitives
 import Parser.Types
 import Text.Megaparsec
-import Text.Megaparsec.Char (char)
+import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 
 definitionP :: Parser Definition
@@ -71,14 +71,57 @@ compilerDefinedP = Undefined <$> getOffset <* symbol "undefined"
 definedValueP :: Parser Value
 definedValueP = DefinedValue <$> lowerCaseNameP
 
-sumLiteralP :: Parser Value
-sumLiteralP = do
-    offset <- getOffset
-    (boolChoice, value) <- left <|> right
-    return $ SumLiteral offset boolChoice value
+productP :: Parser Value
+productP = parens $ ProductLiteral <$> getOffset <*> valueP <* symbol "," <*> valueP
+
+listP :: Parser Value
+listP = lexeme $ between (symbol "[") (symbol "]") p
   where
-    left = between (char '(') (char '|') ((False,) <$> valueP)
-    right = between (char '|') (char ')') ((True,) <$> valueP)
+    p = assembleList <$> sepBy ((,) <$> getOffset <*> valueP) (symbol ",") <*> getOffset
+
+assembleList :: [(ParsingOffset, Value)] -> ParsingOffset -> Value
+assembleList [] finalOffset = SumLiteral finalOffset False (EmptyTupleLiteral finalOffset)
+assembleList ((offset, x) : xs) finalOffset = SumLiteral offset True (ProductLiteral offset x $ assembleList xs finalOffset)
+
+stringP :: Parser Value
+stringP = lexeme $ do
+    offset <- getOffset
+    characters <- stringLiteralP
+    return $ assembleList (map ((offset,) . CharLiteral offset) characters) offset
+
+-- unaryArrowOperatorP :: Parser Value
+-- unaryArrowOperatorP = UnaryArrowOperator <$> operatorP <*> getOffset <*> operandP
+--   where
+--     operatorP =
+--         choice
+--             [ symbol "const" $> ArrowConstant
+--             , symbol "arr" $> Arr
+--             , symbol "first" $> ArrowFirst
+--             , symbol "second" $> ArrowSecond
+--             , symbol "left" $> ArrowLeft
+--             , symbol "right" $> ArrowRight
+--             ]
+--     operandP =
+--         choice
+--             [ emptyTupleP
+--             , compilerDefinedP
+--             , boolP
+--             , try floatP
+--             , intP
+--             , charP
+--             , try definedValueP
+--             , try sumLiteralP
+--             , parens valueP
+--             ]
+
+-- sumLiteralP :: Parser Value
+-- sumLiteralP = do
+--     offset <- getOffset
+--     (boolChoice, value) <- left <|> right
+--     return $ SumLiteral offset boolChoice value
+--   where
+--     left = between (char '(') (char '|') ((False,) <$> valueP)
+--     right = between (char '|') (char ')') ((True,) <$> valueP)
 
 valueTermP :: Parser Value
 valueTermP =
@@ -88,31 +131,35 @@ valueTermP =
         , boolP
         , try floatP
         , intP
-        , charP
+        , try charP
         , try definedValueP
-        , try sumLiteralP
+        , listP
+        , stringP
+        , try productP
         , parens valueP
         ]
 
 valueOperatorTable :: [[Operator Parser Value]]
 valueOperatorTable =
-    [ [binaryL "," (ProductLiteral <$> getOffset)]
-    , -- , [binaryL "|" (SumLiteral <$> getOffset)]
-
-        [ prefix "first" (ArrowFirst <$> getOffset)
-        , prefix "second" (ArrowSecond <$> getOffset)
-        , prefix "left" (ArrowLeft <$> getOffset)
-        , prefix "right" (ArrowRight <$> getOffset)
-        , prefix "const" (ArrowConstant <$> getOffset)
+    [
+        [ prefix "first" (UnaryArrowOperator ArrowFirst <$> getOffset)
+        , prefix "second" (UnaryArrowOperator ArrowSecond <$> getOffset)
+        , prefix "left" (UnaryArrowOperator ArrowLeft <$> getOffset)
+        , prefix "right" (UnaryArrowOperator ArrowRight <$> getOffset)
+        , prefix "const" (UnaryArrowOperator ArrowConstant <$> getOffset)
+        , prefix "arr" (UnaryArrowOperator Arr <$> getOffset)
+        , prefix "l" (flip SumLiteral False <$> getOffset)
+        , prefix "r" (flip SumLiteral True <$> getOffset)
         ]
     ,
-        [ binaryN "***" (TripleAsterisks <$> getOffset)
-        , binaryN "&&&" (TripleAnd <$> getOffset)
-        , binaryN "+++" (TriplePlus <$> getOffset)
-        , binaryN "|||" (TripleBar <$> getOffset)
+        [ binaryN "***" (BinaryArrowOperator TripleAsterisks <$> getOffset)
+        , binaryN "&&&" (BinaryArrowOperator TripleAnd <$> getOffset)
+        , binaryN "+++" (BinaryArrowOperator TriplePlus <$> getOffset)
+        , binaryN "|||" (BinaryArrowOperator TripleBar <$> getOffset)
         ]
     ,
-        [ binaryR ">>>" (ArrowComposition <$> getOffset)
-        , binaryR "<<<" (flip . ArrowComposition <$> getOffset)
+        [ binaryR ">>>" (BinaryArrowOperator ArrowComposition <$> getOffset)
+        , binaryR "<<<" (flip . BinaryArrowOperator ArrowComposition <$> getOffset)
         ]
+        -- , [binaryN "," (ProductLiteral <$> getOffset)]
     ]

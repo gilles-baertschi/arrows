@@ -1,0 +1,116 @@
+type Id a b = undefined
+type IO a b = undefined
+
+type Bool = undefined
+type Int = undefined
+type Float = undefined
+type () = undefined
+type Char = undefined
+
+type List a = (() | (a, List a)) 
+type String = List Char
+
+class Arrow y where
+    id :: y a a
+    arr :: Id a b -> y a b
+    (>>>) :: (y a b, y b c) -> y a c
+    first :: y a b -> y (a, c) (b, c)
+    second :: y a b -> y (c, a) (c, b)
+    (***) :: (y a c, y b d) -> y (a, b) (c, d)
+    (&&&) :: (y a b, y a c) -> y a (b, c)
+
+class Arrow y => Choice y where
+    left :: y a b -> y (a | c) (b | c)
+    right :: y a b -> y (c | a) (c | b)
+    (+++) :: (y a c, y b d) -> y (a | b) (c | d)
+    (|||) :: (y a c, y b c) -> y (a | b) c
+
+class Arrow y => Apply y where
+    app :: y (y a b, a) b
+
+instance Arrow Id where
+    id = undefined
+    arr = undefined
+    (>>>) = undefined
+    first = undefined
+    second = undefined
+    (***) = undefined
+    (&&&) = undefined
+
+instance Choice Id where
+    left = undefined
+    right = undefined
+    (+++) = undefined
+    (|||) = undefined
+
+instance Apply Id where
+    app = undefined
+
+instance Arrow IO where
+    id = arr id
+    arr = undefined
+    (>>>) = undefined
+    first = undefined
+    second = undefined
+    (***) = undefined
+    (&&&) = undefined
+
+instance Choice IO where
+    left = undefined
+    right = undefined
+    (+++) = undefined
+    (|||) = undefined
+
+instance Apply IO where
+    app = undefined
+
+readChar :: IO a Char
+readChar = undefined
+
+fst :: (a, b) -> a
+fst = undefined
+
+snd :: (a, b) -> b
+snd = undefined
+
+flip :: (a, b) -> (b, a)
+flip = undefined
+
+flipChoice :: (a | b) -> (b | a)
+flipChoice = undefined
+
+double :: a -> (a, a)
+double = undefined
+
+head :: List a -> a
+head = undefined ||| fst
+
+tail :: List a -> List a
+tail = undefined ||| snd
+
+add :: (Int, Int) -> Int
+add = undefined
+
+sub :: (Int, Int) -> Int
+sub = undefined
+
+mul :: (Int, Int) -> Int
+mul = undefined
+
+div :: (Int, Int) -> Int
+div = undefined
+
+not :: Bool -> Bool
+not = undefined
+
+and :: (Bool, Bool) -> Bool
+and = undefined
+
+or :: (Bool, Bool) -> Bool
+or = undefined
+
+putChar :: IO Char ()
+putChar = undefined
+
+print :: IO String ()
+print = right (putChar *** print) >>> const ()

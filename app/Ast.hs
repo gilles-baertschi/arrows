@@ -1,4 +1,4 @@
-module Ast (
+module Ast {-(
     ParsingOffset,
     Name (..),
     Program (..),
@@ -12,7 +12,7 @@ module Ast (
     ReferentialType (..),
     resolveReference,
     makeTypeReferential,
-) where
+)-} where
 
 import Control.Monad.State
 import Data.List
@@ -50,16 +50,25 @@ data Value
     | DefinedValue Name
     | DefinedValueFromInstance Name Int
     | Undefined ParsingOffset
-    | ArrowComposition ParsingOffset Value Value
-    | ArrowConstant ParsingOffset Value
-    | ArrowFirst ParsingOffset Value
-    | ArrowSecond ParsingOffset Value
-    | TripleAsterisks ParsingOffset Value Value
-    | TripleAnd ParsingOffset Value Value
-    | ArrowRight ParsingOffset Value
-    | ArrowLeft ParsingOffset Value
-    | TriplePlus ParsingOffset Value Value
-    | TripleBar ParsingOffset Value Value
+    | UnaryArrowOperator UnaryArrowOperator ParsingOffset Value
+    | BinaryArrowOperator BinaryArrowOperator ParsingOffset Value Value
+    -- | Arr ParsingOffset Value
+    -- | ArrowComposition ParsingOffset Value Value
+    -- | ArrowConstant ParsingOffset Value
+    -- | ArrowFirst ParsingOffset Value
+    -- | ArrowSecond ParsingOffset Value
+    -- | TripleAsterisks ParsingOffset Value Value
+    -- | TripleAnd ParsingOffset Value Value
+    -- | ArrowRight ParsingOffset Value
+    -- | ArrowLeft ParsingOffset Value
+    -- | TriplePlus ParsingOffset Value Value
+    -- | TripleBar ParsingOffset Value Value
+    deriving (Read, Eq, Ord, Show)
+
+data UnaryArrowOperator = Arr | ArrowConstant | ArrowFirst | ArrowSecond | ArrowRight | ArrowLeft
+    deriving (Read, Eq, Ord, Show)
+
+data BinaryArrowOperator = ArrowComposition | TripleAsterisks | TripleAnd | TriplePlus | TripleBar
     deriving (Read, Eq, Ord, Show)
 
 data TypeWithValue
@@ -73,16 +82,20 @@ data TypeWithValue
     | TypeWithDefinedValue Type Name
     | TypeWithDefinedValueFromInstance Type Name Int
     | TypeWithUndefined Type
-    | TypeWithArrowComposition Type TypeWithValue TypeWithValue
-    | TypeWithArrowConstant Type TypeWithValue
-    | TypeWithArrowFirst Type TypeWithValue
-    | TypeWithArrowSecond Type TypeWithValue
-    | TypeWithTripleAsterisks Type TypeWithValue TypeWithValue
-    | TypeWithTripleAnd Type TypeWithValue TypeWithValue
-    | TypeWithArrowRight Type TypeWithValue
-    | TypeWithArrowLeft Type TypeWithValue
-    | TypeWithTriplePlus Type TypeWithValue TypeWithValue
-    | TypeWithTripleBar Type TypeWithValue TypeWithValue
+    | TypeWithUnaryArrowOperator UnaryArrowOperator Type TypeWithValue
+    | TypeWithBinaryArrowOperator BinaryArrowOperator Type TypeWithValue TypeWithValue
+
+    -- | TypeWithArr Type TypeWithValue
+    -- | TypeWithArrowComposition Type TypeWithValue TypeWithValue
+    -- | TypeWithArrowConstant Type TypeWithValue
+    -- | TypeWithArrowFirst Type TypeWithValue
+    -- | TypeWithArrowSecond Type TypeWithValue
+    -- | TypeWithTripleAsterisks Type TypeWithValue TypeWithValue
+    -- | TypeWithTripleAnd Type TypeWithValue TypeWithValue
+    -- | TypeWithArrowRight Type TypeWithValue
+    -- | TypeWithArrowLeft Type TypeWithValue
+    -- | TypeWithTriplePlus Type TypeWithValue TypeWithValue
+    -- | TypeWithTripleBar Type TypeWithValue TypeWithValue
     deriving (Read, Eq, Ord, Show)
 
 data ReferentialType = ReferentialType {mainType :: Type, otherTypes :: [Type]}

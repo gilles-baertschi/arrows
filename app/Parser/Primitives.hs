@@ -44,7 +44,7 @@ parensWithState :: ParserWithState s a -> ParserWithState s a
 parensWithState = between (lift $ symbol "(") (lift $ symbol ")")
 
 charLiteralP :: Parser Char
-charLiteralP = between (char '\'') (char '\'') L.charLiteral
+charLiteralP = lexeme (between (char '\'') (char '\'') L.charLiteral) <|> symbol "'\\n'" $> '\n'
 
 stringLiteralP :: Parser String
 stringLiteralP = char '\"' *> manyTill L.charLiteral (char '\"')
@@ -95,4 +95,4 @@ prefixWithState name f = Prefix (f <$ lift (symbol name))
 postfixWithState name f = Postfix (f <$ lift (symbol name))
 
 keywords :: [String]
-keywords = ["where", "instance", "class", "undefined", "->"] -- ["where", "instance", "class", "first", "second", "left", "right", "const", "***", "&&&", "+++", "|||", ",", "|"]
+keywords = ["where", "instance", "class", "undefined", "->", ",", "|"] -- ["where", "instance", "class", "arr", "first", "second", "left", "right", "const", "***", "&&&", "+++", "|||", ",", "|"]

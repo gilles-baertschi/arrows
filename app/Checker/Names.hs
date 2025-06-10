@@ -123,6 +123,7 @@ assertTypeNameSafety strictArgumentCounts referentialType@(ReferentialType t ref
                 lift $ setOffset offset
                 fail $ "expected " ++ show (requiredArgumentCount - length coreArguments) ++ " arguments but recieved " ++ show (length extendedArguments) ++ show arguments
             mapM_ check arguments
+        (ForAllInstances []) -> return ()
         (ForAllInstances [_]) -> return ()
         ThisClass -> return ()
         _ -> undefined
@@ -146,16 +147,16 @@ assertValueNameSafety = check
     check (ProductLiteral _ x y) = check x >> check y
     check (SumLiteral _ _ x) = check x
     check (DefinedValue name) = assertValueNameExist name
-    check (ArrowComposition _ x y) = check x >> check y
-    check (ArrowConstant _ x) = check x
-    check (ArrowFirst _ x) = check x
-    check (ArrowSecond _ x) = check x
-    check (TripleAsterisks _ x y) = check x >> check y
-    check (TripleAnd _ x y) = check x >> check y
-    check (ArrowRight _ x) = check x
-    check (ArrowLeft _ x) = check x
-    check (TriplePlus _ x y) = check x >> check y
-    check (TripleBar _ x y) = check x >> check y
+    check (BinaryArrowOperator _ _ x y) = check x >> check y
+    check (UnaryArrowOperator _ _ x) = check x
+    -- check (ArrowFirst _ x) = check x
+    -- check (ArrowSecond _ x) = check x
+    -- check (TripleAsterisks _ x y) = check x >> check y
+    -- check (TripleAnd _ x y) = check x >> check y
+    -- check (ArrowRight _ x) = check x
+    -- check (ArrowLeft _ x) = check x
+    -- check (TriplePlus _ x y) = check x >> check y
+    -- check (TripleBar _ x y) = check x >> check y
     check _ = return ()
 
 assertInstanceNameSafety :: Instance -> ParserWithDoubleState Names Program ()
