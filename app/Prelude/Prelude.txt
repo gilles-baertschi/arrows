@@ -28,6 +28,12 @@ class Arrow y => Choice y where
 class Arrow y => Apply y where
     app :: y (y a b, a) b
 
+class Eq a where
+    eq :: (a, a) -> Bool
+
+class Show a where
+    show :: a -> String
+
 instance Arrow Id where
     id = undefined
     arr = undefined
@@ -47,7 +53,7 @@ instance Apply Id where
     app = undefined
 
 instance Arrow IO where
-    id = arr id
+    id = undefined
     arr = undefined
     (>>>) = undefined
     first = undefined
@@ -63,6 +69,27 @@ instance Choice IO where
 
 instance Apply IO where
     app = undefined
+
+instance Eq Bool where
+    eq = undefined
+
+instance Eq Int where
+    eq = undefined
+
+instance Eq Char where
+    eq = undefined
+
+instance Eq () where
+    eq = undefined
+
+instance Show Bool where
+    show = boolToChoice >>>[Id] const[Id] "True" |||[Id] const[Id] "False"
+
+instance Show Char where
+    show = double >>>[Id] second[Id] (const[Id] (l ())) >>>[Id] r
+
+-- id :: a -> a
+-- id = undefined
 
 readChar :: IO a Char
 readChar = undefined
@@ -100,6 +127,9 @@ mul = undefined
 div :: (Int, Int) -> Int
 div = undefined
 
+mod :: (Int, Int) -> Int
+mod = undefined
+
 not :: Bool -> Bool
 not = undefined
 
@@ -108,6 +138,24 @@ and = undefined
 
 or :: (Bool, Bool) -> Bool
 or = undefined
+
+boolToChoice :: Bool -> (() | ())
+boolToChoice = double >>> second[Id] (const[Id] ()) >>> choice
+
+choice :: (Bool, a) -> (a | a)
+choice = undefined
+
+l :: a -> (a | b)
+l = undefined
+
+r :: a -> (b | a)
+r = undefined
+
+chr :: Int -> Char
+chr = undefined
+
+ord :: Char -> Int
+ord = undefined
 
 putChar :: IO Char ()
 putChar = undefined

@@ -75,8 +75,8 @@ getOffsetFromValue value = case value of
     (EmptyTupleLiteral offset) -> offset
     (DefinedValue (Name offset _)) -> offset
     (DefinedValueFromInstance (Name offset _) _) -> offset
-    (UnaryArrowOperator _ offset _) -> offset
-    (BinaryArrowOperator _ offset _ _) -> offset
+    (UnaryArrowOperator _ offset _ _) -> offset
+    (BinaryArrowOperator _ offset _ _ _) -> offset
     (Undefined offset) -> offset
 
 -- (ArrowComposition offset _ _) -> offset
@@ -99,17 +99,18 @@ increaseReferences (ReferentialType t references) index = ReferentialType (incre
     increase (TypeReference i) = TypeReference (i + index)
     increase (AliasExtention i arguments) = AliasExtention (i + index) $ map increase arguments
     increase (AnyType i arguments) = AnyType (i + index) arguments
+    increase (ForAllInstances i arguments) = ForAllInstances (i + index) arguments
     increase x = x
 
 toAnyTypeReferences :: ReferentialType -> ReferentialType
-toAnyTypeReferences (ReferentialType t references) = ReferentialType t (zipWith toAnyType [0 ..] references)
+toAnyTypeReferences (ReferentialType t references) = ReferentialType (toAnyType t) (map toAnyType references)
   where
-    toAnyType index (Product x y) = Product (toAnyType index x) (toAnyType index y)
-    toAnyType index (Sum x y) = Sum (toAnyType index x) (toAnyType index y)
-    toAnyType index (AliasReference name arguments) = AliasReference name $ map (toAnyType index) arguments
-    toAnyType index (AliasExtention offset arguments) = AliasExtention offset $ map (toAnyType index) arguments
-    toAnyType index (ForAllInstances classesWithNames) = AnyType index classesWithNames
-    toAnyType _ x = x
+    toAnyType (Product x y) = Product (toAnyType x) (toAnyType y)
+    toAnyType (Sum x y) = Sum (toAnyType x) (toAnyType y)
+    toAnyType (AliasReference name arguments) = AliasReference name $ map toAnyType arguments
+    toAnyType (AliasExtention offset arguments) = AliasExtention offset $ map toAnyType arguments
+    toAnyType (ForAllInstances index classesWithNames) = AnyType index classesWithNames
+    toAnyType x = x
 
 insertType :: ReferentialType -> ReferentialType -> Int -> ReferentialType
 insertType (ReferentialType outerMainType outerOtherTypes) nonIncreasedInsertedTypes index = ReferentialType outerMainType $ replace index insertedMainType outerOtherTypes ++ insertedOtherTypes
@@ -125,24 +126,45 @@ replace i x xs = before ++ [x] ++ after
         (_ : after') -> after'
 
 displayReferentialType :: ReferentialType -> String
-displayReferentialType (ReferentialType t references) = display t
+displayReferentialType (ReferentialType t references) = evalState (display t) []
   where
-    display :: Type -> String
-    display (Product x y) = "(" ++ display x ++ ", " ++ display y ++ ")"
-    display (Sum x y) = "(" ++ display x ++ " | " ++ display y ++ ")"
+    display :: Type -> State [Int] String 
+    display (Product x y) = do
+        xString <- display x
+        yString <- display y
+        return $ "(" ++ xString ++ ", " ++ yString ++ ")"
+    display (Sum x y) = do
+        xString <- display x
+        yString <- display y
+        return $ "(" ++ xString ++ " | " ++ yString ++ ")"
     -- display Bool = "Bool"
     -- display Float = "Float"
     -- display Int = "Int"
     -- display Char = "Char"
     -- display EmptyTuple = "()"
-    display (ForAllInstances classNames) = "for all {" ++ intercalate ", " (map nameString classNames) ++ "}"
-    display (AnyType _ classNames) = "any {" ++ intercalate ", " (map nameString classNames) ++ "}"
-    display (AliasReference name arguments) = unwords (nameString name : map display arguments)
+    display (ForAllInstances _ classNames) = return $ "for all {" ++ intercalate ", " (map nameString classNames) ++ "}"
+    display (AnyType _ classNames) = return $ "any {" ++ intercalate ", " (map nameString classNames) ++ "}"
+    display (AliasReference name arguments) = case name of
+        "Id" -> do
+            inputString <- display (head arguments)
+            outputString <- display (arguments !! 1)
+            return $ inputString ++ " -> " ++ outputString
+        _ -> unwords . (nameString name :) <$> mapM display arguments
     display (AliasExtention index extendedArguments) = case references !! index of
         (AliasReference name coreArguments) -> display $ AliasReference name $ coreArguments ++ extendedArguments
         _ -> undefined
-    display (TypeReference index) = display $ references !! index
-    display ThisClass = "this"
+    display (TypeReference index) = case references !! index of
+        (ForAllInstances _ _) -> getName index
+        (AnyType _ _) -> getName index
+        x -> display x
+    display ThisClass = return "this"
+    getName :: Int -> State [Int] String
+    getName indexInReferences = do
+        indecies <- get
+        let maybeIndex = elemIndex indexInReferences indecies
+        ("a" ++) . show <$> case maybeIndex of
+            Nothing -> modify (++ [indexInReferences]) >> return (length indecies)
+            (Just indexInNames) -> return indexInNames
 
 getDefinitionsFromInstance :: Instance -> ParserWithState Program [Definition]
 getDefinitionsFromInstance (Instance insertedType className members) = do
@@ -160,7 +182,7 @@ addTypeToValue t (FloatLiteral _ x) = TypeWithFloatLiteral t x
 addTypeToValue t (CharLiteral _ x) = TypeWithCharLiteral t x
 addTypeToValue t (EmptyTupleLiteral _) = TypeWithEmptyTupleLiteral t
 addTypeToValue t (DefinedValue name) = TypeWithDefinedValue t name
-addTypeToValue t (DefinedValueFromInstance name index) = TypeWithDefinedValueFromInstance t name index
+addTypeToValue t (DefinedValueFromInstance name (Left index)) = TypeWithDefinedValueFromInstance t name index
 addTypeToValue t (Undefined _) = TypeWithUndefined t
 addTypeToValue t@(Product xType yType) (ProductLiteral _ xValue yValue) = TypeWithProductLiteral t (addTypeToValue xType xValue) (addTypeToValue yType yValue)
 addTypeToValue t@(Sum xType yType) (SumLiteral _ boolChoice value) = TypeWithSumLiteral t boolChoice $ if boolChoice then addTypeToValue yType value else addTypeToValue xType value
@@ -180,6 +202,13 @@ getTypeFromTypeWithValue typeWithValue = case typeWithValue of
     (TypeWithUndefined t) -> t
     (TypeWithUnaryArrowOperator _ t _) -> t
     (TypeWithBinaryArrowOperator _ t _ _) -> t
+
+idArrowType :: ParsingOffset -> ReferentialType
+idArrowType offset = ReferentialType (AliasReference (Name offset "Id") []) []
+
+isIdArrow :: ReferentialType -> Bool
+isIdArrow (ReferentialType (AliasReference (Name _ "Id") []) []) = True 
+isIdArrow _ = False
 
 -- getTypeFromTypeWithValue (TypeWithArr t _) = t
 -- getTypeFromTypeWithValue (TypeWithArrowComposition t _ _) = t

@@ -50,3 +50,12 @@ debug = True
 
 prelude :: String
 prelude = $(embedStringFile "app/Prelude/Prelude.txt")
+
+-- class MyClass a where
+--     myFun :: a -> a
+--
+-- instance MyClass [a] where 
+--     myFun x = [Prelude.head x]
+--
+-- instance MyClass String where
+--     myFun _ = ""

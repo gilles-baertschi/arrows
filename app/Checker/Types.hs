@@ -7,75 +7,103 @@ import Data.Functor
 import Helpers
 import Parser.Primitives
 import Text.Megaparsec hiding (State)
+import Data.Either
+import Data.Bifunctor
 
 checkTypeSafety :: ParserWithState Program ()
 checkTypeSafety = do
-    allDefinitions <- gets definitions
-    mapM_ checkDefinition allDefinitions
-    -- modify $ \program -> program{definitions = zipWith (\(Definition name referentialType _) value -> Definition name referentialType value) allDefinitions definitionValues}
-    -- allDefinitionsFromInstances <- gets instances >>= mapM getDefinitionsFromInstance
-    -- instanceValues <- mapM (mapM (\(Definition _ referentialType value) -> assertReferentialType referentialType value)) allDefinitionsFromInstances
-    -- modify $ \program -> program{instances = zipWith (\(Instance name referentialType _) value -> Definition name referentialType value) allDefinitionsFromInstances instanceValues}
-    -- instances' <-
-    --    gets instances
-    --        >>= mapM
-    gets instances
-        >>= mapM_
-            ( \currentInstance@(Instance t name members) -> do
-                definitionsFromInstance <- getDefinitionsFromInstance currentInstance
-                mapM_ checkDefinition definitionsFromInstance
-                -- return $ Instance t name $ zip (map fst members) values
-            )
-
--- modify $ \program -> program{instances = instances'}
-
--- mapM_ (uncurry assertReferentialType) allDefinition§sFromInstances
-
--- allDefinitionsFromInstances <- gets $ concatMap (\(Instance instanceType' _ members) -> map (instanceType',) members) . instances
--- mapM_
---    ( \(insertedType, (name, value)) -> do
---        referentialType <- getTypeFromName name
---        assertReferentialType (insertType referentialType insertedType 0) value
---    )
---    allDefinitionsFromInstances
+    gets definitions >>= mapM_ checkDefinition
+    gets instances >>= mapM_ (getDefinitionsFromInstance >=> mapM_ checkDefinition)
 
 checkDefinition :: Definition -> ParserWithState Program (TypeWithValue, [Type])
-checkDefinition (Definition _ referentialType value) = assertReferentialType referentialType value
+checkDefinition (Definition _ referentialType value) = do 
+    result <- assertReferentialType referentialType value
+    case result of 
+        [] -> undefined
+        [singleResult] -> return singleResult
+        multipleResults -> fail $ "ambiguous types\n" ++ show multipleResults
 
-assertReferentialType :: ReferentialType -> Value -> ParserWithState Program (TypeWithValue, [Type])
-assertReferentialType (ReferentialType frame references) content = runStateT (assertType frame content) references
+assertReferentialType :: ReferentialType -> Value -> ParserWithState Program [(TypeWithValue, [Type])]
+assertReferentialType (ReferentialType frame references) content = evalStateT (assertType frame content) references
 
-assertType :: Type -> Value -> ParserWithDoubleState [Type] Program TypeWithValue
-assertType frame (Undefined _) = return $ TypeWithUndefined frame
+assertType :: Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
+assertType frame (Undefined _) = returnTypeWithValueAndState $ TypeWithUndefined frame
 assertType (TypeReference index) content = do
-    when (index < 0) $ fail $ show content
+    when (index < 0) $ fail $ "tried resolving negatide reference: " ++ show content
     frame <- gets (!! index)
-    case frame of
-        (ForAllInstances typeClassNames) -> undefined
-        _ -> assertType frame content
+    -- case frame of
+    --     (ForAllInstances typeClassNames) -> undefined
+    --     _ -> assertType frame content
+    assertType frame content
+-- assertType frame@(AliasReference name [inputType, outputType]) content@(UnaryArrowOperator {}) = assertArrow (nameString name) inputType outputType content
+-- assertType frame@(AliasReference name [inputType, outputType]) content@(BinaryArrowOperator {}) = assertArrow (nameString name) inputType outputType content
 assertType frame content@(DefinedValue name) = do
     eitherReferentialTypes <- lift $ getTypesFromName name
     case eitherReferentialTypes of
         (Left fromDefinition) -> do
             inferiorType <- addReferentialType $ toAnyTypeReferences fromDefinition
             typeGreaterThanWithOffset (nameOffset name) frame inferiorType
-            return $ TypeWithDefinedValue frame name
+            returnTypeWithValueAndState $ TypeWithDefinedValue frame name
         (Right fromInstances) -> do
+            -- let x = if name == "arr" then [head fromInstances] else fromInstances
             possibleIndecies <-
                 concat
                     <$> mapM
                         ( \(index, fromInstance) -> do
-                            backup <- get
-                            inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance
-                            (typeGreaterThanWithOffset (nameOffset name) frame inferiorType $> [index]) <|> (put backup >> return [])
+                             backup <- get
+                             ( do
+                                 inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance
+                                 typeGreaterThanWithOffset (nameOffset name) frame inferiorType
+                                 state <- get
+                                 put backup
+                                 return [(TypeWithDefinedValueFromInstance frame name index, state)]
+                                 ) <|> (put backup >> return [])
                         )
                         (zip [0 ..] fromInstances)
             case possibleIndecies of
                 [] -> failTypeInference frame content
-                [index] -> return $ TypeWithDefinedValueFromInstance frame name index
-                _ -> return $ TypeWithDefinedValue frame name
--- success <- typeGreaterThan frame inferiorType
--- unless success $ failTypeMatch (nameOffset name) frame inferiorType
+                xs -> return xs
+                -- [index] -> return $ TypeWithDefinedValueFromInstance frame name index
+                -- index:xs -> return $ TypeWithDefinedValueFromInstance frame name index
+assertType frame content@(DefinedValueFromInstance name (Left index)) = do
+    fromInstance <- lift $ (!! index) . fromRight undefined <$> getTypesFromName name
+    inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance
+    typeGreaterThanWithOffset (nameOffset name) frame inferiorType
+    returnTypeWithValueAndState $ TypeWithDefinedValueFromInstance frame name index
+assertType frame content@(DefinedValueFromInstance name (Right instancedType)) = do
+    instancesWithName <- lift $ gets $ filter ((name `elem`) . map fst . instanceMembers) . instances
+    let possibleInstances = filter ((== instancedType) . instanceType . snd) $ zip [0..] instancesWithName
+    case possibleInstances of
+        [] -> do 
+            setOffset $ nameOffset name
+            fail $ "no instance of the type " ++ displayReferentialType instancedType
+        [(index, singleInstance)] -> assertType frame $ DefinedValueFromInstance name $ Left index
+        _ -> do 
+            -- setOffset $ nameOffset name
+            fail $ "multiple instances of the type " ++ displayReferentialType instancedType
+assertType frame content@(UnaryArrowOperator ArrowConstant offset referentialType innerValue) = if maybe False isIdArrow referentialType
+    then assertAtomicArrow frame content offset "Id" 
+    else do
+        -- backup <- get
+        -- assertAtomicArrow frame content offset "Id" <|> assertAtomicArrow frame content offset "IO" <|> put backup >> 
+        assertType frame $ UnaryArrowOperator Arr offset Nothing $ UnaryArrowOperator ArrowConstant offset (Just $ idArrowType offset) innerValue
+assertType frame content@(UnaryArrowOperator unaryOperator offset referentialType innerArrow) =  if maybe False isIdArrow referentialType
+    then assertAtomicArrow frame content offset "Id" 
+    else assertArrowOperator frame content offset operator innerArrow
+  where
+    operator = DefinedValue $ Name offset $ show unaryOperator
+assertType frame content@(BinaryArrowOperator binaryOperator offset referentialType firstArrow secondArrow) = if maybe False isIdArrow referentialType
+    then assertAtomicArrow frame content offset "Id" 
+    else assertArrowOperator frame content offset operator inner
+  where
+    operator = DefinedValue $ Name offset $ show binaryOperator
+    inner = ProductLiteral offset firstArrow secondArrow
+    -- let maybeAtomicArrow = case frame of 
+    --                                     (AliasReference name arguments) -> if name == "Id" || name == "IO" then Just (name, arguments) else Nothing 
+    --                                     _ -> Nothing
+    -- case maybeAtomicArrow of
+    --     Just (name, [inputType, outputType]) -> assertArrow (nameString name) inputType outputType content
+    --     Nothing -> assertType frame $ applyOperator offset (DefinedValue $ Name offset $ show operator) $ ProductLiteral offset firstArrow secondArrow
 assertType frame@(AliasReference name arguments) content = do
     alias <- lift $ getAlias name
     case alias of
@@ -90,21 +118,23 @@ assertType frame@(AliasReference name arguments) content = do
                         [inputType, outputType] -> assertArrow "IO" inputType outputType content
                         _ -> undefined
                 "Bool" -> case content of
-                    (BoolLiteral _ value) -> return $ TypeWithBoolLiteral frame value
+                    (BoolLiteral _ value) -> returnTypeWithValueAndState $ TypeWithBoolLiteral frame value
                     _ -> failTypeInference frame content
                 "Float" -> case content of
-                    (FloatLiteral _ value) -> return $ TypeWithFloatLiteral frame value
+                    (FloatLiteral _ value) -> returnTypeWithValueAndState $ TypeWithFloatLiteral frame value
                     _ -> failTypeInference frame content
                 "Int" -> case content of
-                    (IntLiteral _ value) -> return $ TypeWithIntLiteral frame value
+                    (IntLiteral _ value) -> returnTypeWithValueAndState $ TypeWithIntLiteral frame value
                     _ -> failTypeInference frame content
                 "Char" -> case content of
-                    (CharLiteral _ value) -> return $ TypeWithCharLiteral frame value
+                    (CharLiteral _ value) -> returnTypeWithValueAndState $ TypeWithCharLiteral frame value
                     _ -> failTypeInference frame content
                 "()" -> case content of
-                    (EmptyTupleLiteral _) -> return $ TypeWithEmptyTupleLiteral frame
+                    (EmptyTupleLiteral _) -> returnTypeWithValueAndState $ TypeWithEmptyTupleLiteral frame
                     _ -> failTypeInference frame content
-                _ -> undefined
+                x -> do 
+                    setOffset $ nameOffset name
+                    fail $ "tried to resolve undefined type " ++ x 
         (TypeAlias _ _ (Just referentialType)) -> do
             increasedMainType <- addAlias arguments referentialType
             assertType increasedMainType content
@@ -114,171 +144,190 @@ assertType (AliasExtention index arguments) content = do
 assertType (AnyType index []) content = do
     newType <- getTypeFromValue content
     modify $ replace index newType
-    return $ addTypeToValue newType content
+    returnTypeWithValueAndState $ addTypeToValue newType content
 assertType (AnyType _ _) _ = undefined
-assertType (ForAllInstances _) _ = undefined
+assertType (ForAllInstances _ instanceNames) content = fail $ show instanceNames ++ "\n" ++ show content
 assertType ThisClass _ = undefined
 assertType frame@(Sum x y) content = case content of
     (SumLiteral _ boolChoice value) -> do
-        result <- if boolChoice then assertType y value else assertType x value
-        return $ TypeWithSumLiteral frame boolChoice result
-    _ -> failTypeInference frame content
+        map (first $ TypeWithSumLiteral frame boolChoice) <$> if boolChoice then assertType y value else assertType x value
+        -- returnTypeWithValueAndState $ TypeWithSumLiteral frame boolChoice result
+    _ -> do 
+        failTypeInference frame content
 assertType frame@(Product x y) content = case content of
     (ProductLiteral _ x' y') -> do
-        resultX <- assertType x x'
-        resultY <- assertType y y'
-        return $ TypeWithProductLiteral frame resultX resultY
-    _ -> failTypeInference frame content
+        possibleResultsX <- assertType x x'
+        -- resultY <- assertType y y'
+        -- return $ TypeWithProductLiteral frame resultX resultY
+        combineAssertion possibleResultsX (TypeWithProductLiteral frame) y y'
+        -- concat <$> mapM (\(resultX, state) ->
+        --     map (first $ TypeWithProductLiteral frame resultX) 
+        --         <$> assertTypeWithState state y y'
+        --         ) possibleResultsX
+    _ -> do
+        failTypeInference frame content
 
--- assertType frame@Bool content = case content of
---    (BoolLiteral _ _) -> return content
---    _ -> failTypeInference frame content
--- assertType frame@Float content = case content of
---     (FloatLiteral _ _) -> return content
---     _ -> failTypeInference frame content
--- assertType frame@Int content = case content of
---     (IntLiteral _ _) -> return content
---     _ -> failTypeInference frame content
--- assertType frame@Char content = case content of
---     (CharLiteral _ _) -> return content
---     _ -> failTypeIstrQnference frame content
--- assertType frame@EmptyTuple content = case content of
---     (EmptyTupleLiteral _) -> return content
---     _ -> failTypeInference frame content
 
-assertArrow :: String -> Type -> Type -> Value -> ParserWithDoubleState [Type] Program TypeWithValue
+-- f :: String ->  ParserWithDoubleState [Type] Program String
+-- f x = return x
+
+assertArrow :: String -> Type -> Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
 assertArrow arrowInstance inputType outputType content =
     let arrowType = AliasReference (Name (getOffsetFromValue content) arrowInstance) [inputType, outputType]
      in case content of
-            (UnaryArrowOperator Arr _ value) -> do
-                innerArrow <- assertType (AliasReference "Id" [inputType, outputType]) value
-                return $ TypeWithUnaryArrowOperator Arr arrowType innerArrow
-            (UnaryArrowOperator ArrowConstant _ value) -> do
-                value' <- assertType outputType value
-                return $ TypeWithUnaryArrowOperator ArrowConstant arrowType value'
-            (BinaryArrowOperator ArrowComposition _ firstArrow secondArrow) -> do
+            (UnaryArrowOperator Arr _ _ value) -> do
+                possibleInnerArrows <- assertType (AliasReference "Id" [inputType, outputType]) value
+                return $ map (first $ TypeWithUnaryArrowOperator Arr arrowType) possibleInnerArrows
+                -- return $ TypeWithUnaryArrowOperator Arr arrowType innerArrow
+            (UnaryArrowOperator ArrowConstant _ _ value) -> do
+                -- value' <- assertType outputType value
+                possibleValues <- assertType outputType value
+                return $ map (first $ TypeWithUnaryArrowOperator ArrowConstant arrowType) possibleValues
+                -- return $ TypeWithUnaryArrowOperator ArrowConstant arrowType value'
+            (BinaryArrowOperator ArrowComposition _ _ firstArrow secondArrow) -> do
                 sharedType <- addTypeVariabel
-                firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [inputType, sharedType]) firstArrow
-                secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [sharedType, outputType]) secondArrow
-                return $ TypeWithBinaryArrowOperator ArrowComposition arrowType firstArrow' secondArrow'
-            (UnaryArrowOperator ArrowFirst offset firstArrow) -> do
+                -- firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [inputType, sharedType]) firstArrow
+                -- secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [sharedType, outputType]) secondArrow
+                -- return $ TypeWithBinaryArrowOperator ArrowComposition arrowType firstArrow' secondArrow'
+                possibleFirstArrows <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [inputType, sharedType]) firstArrow
+                -- concat <$> mapM (\(firstArrow', state) ->
+                --     map (first $ TypeWithBinaryArrowOperator ArrowComposition arrowType firstArrow') 
+                --         <$> assertTypeWithState state (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [sharedType, outputType]) secondArrow
+                --     ) possibleFirstArrows
+                combineAssertion possibleFirstArrows (TypeWithBinaryArrowOperator ArrowComposition arrowType) (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [sharedType, outputType]) secondArrow
+            (UnaryArrowOperator ArrowFirst offset _ firstArrow) -> do
                 bypassedType <- addTypeVariabel
                 innerInputType <- addTypeVariabel
                 innerOutputType <- addTypeVariabel
                 typeGreaterThanWithOffset offset (Product innerInputType bypassedType) inputType
-                -- successInput <- typeGreaterThan (Product innerInputType bypassedType) inputType
-                -- unless successInput $ failTypeMatch offset (Product innerInputType bypassedType) inputType
                 typeGreaterThanWithOffset offset (Product innerOutputType bypassedType) outputType
-                -- successOutput <- typeGreaterThan (Product innerOutputType bypassedType) outputType
-                -- unless successOutput $ failTypeMatch offset (Product innerOutputType bypassedType) outputType
-                firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [innerInputType, innerOutputType]) firstArrow
-                return $ TypeWithUnaryArrowOperator ArrowFirst arrowType firstArrow'
-            (UnaryArrowOperator ArrowSecond offset secondArrow) -> do
+                -- firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [innerInputType, innerOutputType]) firstArrow
+                -- return $ TypeWithUnaryArrowOperator ArrowFirst arrowType firstArrow'
+                possibleFirstArrows <-  assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [innerInputType, innerOutputType]) firstArrow
+                return $ map (first $ TypeWithUnaryArrowOperator ArrowFirst arrowType) possibleFirstArrows
+            (UnaryArrowOperator ArrowSecond offset _ secondArrow) -> do
                 bypassedType <- addTypeVariabel
                 innerInputType <- addTypeVariabel
                 innerOutputType <- addTypeVariabel
                 typeGreaterThanWithOffset offset (Product bypassedType innerInputType) inputType
-                -- successInput <- typeGreaterThan (Product bypassedType innerInputType) inputType
-                -- unless successInput $ failTypeMatch offset (Product bypassedType innerInputType) inputType
                 typeGreaterThanWithOffset offset (Product bypassedType innerOutputType) outputType
-                -- successOutput <- typeGreaterThan (Product bypassedType innerOutputType) outputType
-                -- unless successOutput $ failTypeMatch offset (Product bypassedType innerOutputType) outputType
-                secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [innerInputType, innerOutputType]) secondArrow
-                return $ TypeWithUnaryArrowOperator ArrowSecond arrowType secondArrow'
-            (BinaryArrowOperator TripleAsterisks offset firstArrow secondArrow) -> do
+                -- secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [innerInputType, innerOutputType]) secondArrow
+                -- return $ TypeWithUnaryArrowOperator ArrowSecond arrowType secondArrow'
+                possibleSecondArrows <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [innerInputType, innerOutputType]) secondArrow
+                return $ map (first $ TypeWithUnaryArrowOperator ArrowSecond arrowType) possibleSecondArrows
+            (BinaryArrowOperator TripleAsterisks offset _ firstArrow secondArrow) -> do
                 firstInputType <- addTypeVariabel
                 firstOutputType <- addTypeVariabel
                 secondInputType <- addTypeVariabel
                 secondOutputType <- addTypeVariabel
                 typeGreaterThanWithOffset offset (Product firstInputType secondInputType) inputType
-                -- successInput <- typeGreaterThan (Product firstInputType secondInputType) inputType
-                -- unless successInput $ failTypeMatch offset (Product firstInputType secondInputType) inputType
                 typeGreaterThanWithOffset offset (Product firstOutputType secondOutputType) outputType
-                -- successOutput <- typeGreaterThan (Product firstOutputType secondOutputType) outputType
-                -- unless successOutput $ failTypeMatch offset (Product firstOutputType secondOutputType) outputType
-                firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [firstInputType, firstOutputType]) firstArrow
-                secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [secondInputType, secondOutputType]) secondArrow
-                return $ TypeWithBinaryArrowOperator TripleAsterisks arrowType firstArrow' secondArrow'
-            (BinaryArrowOperator TripleAnd offset firstArrow secondArrow) -> do
+                -- firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [firstInputType, firstOutputType]) firstArrow
+                -- secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [secondInputType, secondOutputType]) secondArrow
+                -- return $ TypeWithBinaryArrowOperator TripleAsterisks arrowType firstArrow' secondArrow'
+                possibleFirstArrows <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [firstInputType, firstOutputType]) firstArrow
+                combineAssertion possibleFirstArrows (TypeWithBinaryArrowOperator TripleAsterisks arrowType) (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [secondInputType, secondOutputType]) secondArrow
+                -- concat <$> mapM (\(firstArrow', state) ->
+                --     map (first $ TypeWithBinaryArrowOperator TripleAsterisks arrowType firstArrow') 
+                --         <$> assertTypeWithState state (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [secondInputType, secondOutputType]) secondArrow
+                --     ) possibleFirstArrows
+            (BinaryArrowOperator TripleAnd offset _ firstArrow secondArrow) -> do
                 onlyInputType <- addTypeVariabel
                 firstOutputType <- addTypeVariabel
                 secondOutputType <- addTypeVariabel
                 typeGreaterThanWithOffset offset onlyInputType inputType
-                -- successInput <- typeGreaterThan onlyInputType inputType
-                -- unless successInput $ failTypeMatch offset onlyInputType inputType
                 typeGreaterThanWithOffset offset (Product firstOutputType secondOutputType) outputType
-                -- successOutput <- typeGreaterThan (Product firstOutputType secondOutputType) outputType
-                -- unless successOutput $ failTypeMatch offset (Product firstOutputType secondOutputType) outputType
-                firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [onlyInputType, firstOutputType]) firstArrow
-                secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [onlyInputType, secondOutputType]) secondArrow
-                return $ TypeWithBinaryArrowOperator TripleAnd arrowType firstArrow' secondArrow'
-            (UnaryArrowOperator ArrowLeft offset leftArrow) -> do
+                -- firstArrow' <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [onlyInputType, firstOutputType]) firstArrow
+                -- secondArrow' <- assertType (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [onlyInputType, secondOutputType]) secondArrow
+                -- return $ TypeWithBinaryArrowOperator TripleAnd arrowType firstArrow' secondArrow'
+                possibleFirstArrows <- assertType (AliasReference (Name (getOffsetFromValue firstArrow) arrowInstance) [onlyInputType, firstOutputType]) firstArrow
+                combineAssertion possibleFirstArrows (TypeWithBinaryArrowOperator TripleAnd arrowType) (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [onlyInputType, secondOutputType]) secondArrow
+                -- concat <$> mapM (\(firstArrow', state) ->
+                --     map (first $ TypeWithBinaryArrowOperator TripleAnd arrowType firstArrow') 
+                --         <$> assertTypeWithState state (AliasReference (Name (getOffsetFromValue secondArrow) arrowInstance) [onlyInputType, secondOutputType]) secondArrow
+                --     ) possibleFirstArrows
+            (UnaryArrowOperator ArrowLeft offset _ leftArrow) -> do
                 bypassedType <- addTypeVariabel
                 innerInputType <- addTypeVariabel
                 innerOutputType <- addTypeVariabel
                 typeGreaterThanWithOffset offset (Sum innerInputType bypassedType) inputType
-                -- successInput <- typeGreaterThan (Sum innerInputType bypassedType) inputType
-                -- unless successInput $ failTypeMatch offset (Sum innerInputType bypassedType) inputType
                 typeGreaterThanWithOffset offset (Sum innerOutputType bypassedType) outputType
-                -- successOutput <- typeGreaterThan (Sum innerOutputType bypassedType) outputType
-                -- unless successOutput $ failTypeMatch offset (Sum innerOutputType bypassedType) outputType
-                leftArrow' <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [innerInputType, innerOutputType]) leftArrow
-                return $ TypeWithUnaryArrowOperator ArrowLeft arrowType leftArrow'
-            (UnaryArrowOperator ArrowRight offset rightArrow) -> do
+                possibleLeftArrows <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [innerInputType, innerOutputType]) leftArrow
+                return $ map (first $ TypeWithUnaryArrowOperator ArrowLeft arrowType) possibleLeftArrows
+                -- leftArrow' <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [innerInputType, innerOutputType]) leftArrow
+                -- return $ TypeWithUnaryArrowOperator ArrowLeft arrowType leftArrow'
+            (UnaryArrowOperator ArrowRight offset _ rightArrow) -> do
                 bypassedType <- addTypeVariabel
                 innerInputType <- addTypeVariabel
                 innerOutputType <- addTypeVariabel
                 typeGreaterThanWithOffset offset (Sum bypassedType innerInputType) inputType
-                -- successInput <- typeGreaterThan (Sum bypassedType innerInputType) inputType
-                -- unless successInput $ failTypeMatch offset (Sum bypassedType innerInputType) inputType
-                -- x <- get
-                -- fail $ show x ++ "\n" ++ show (Sum bypassedType innerOutputType) ++ "\n" ++ show outputType
                 typeGreaterThanWithOffset offset (Sum bypassedType innerOutputType) outputType
-                -- successOutput <- typeGreaterThan (Sum bypassedType innerOutputType) outputType
-                -- unless successOutput $ failTypeMatch offset (Sum bypassedType innerOutputType) outputType
-                rightArrow' <- assertType (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [innerInputType, innerOutputType]) rightArrow
-                return $ TypeWithUnaryArrowOperator ArrowRight arrowType rightArrow'
-            (BinaryArrowOperator TriplePlus offset leftArrow rightArrow) -> do
+                possibleRightArrows <- assertType (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [innerInputType, innerOutputType]) rightArrow
+                return $ map (first $ TypeWithUnaryArrowOperator ArrowRight arrowType) possibleRightArrows
+                -- rightArrow' <- assertType (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [innerInputType, innerOutputType]) rightArrow
+                -- return $ TypeWithUnaryArrowOperator ArrowRight arrowType rightArrow'
+            (BinaryArrowOperator TriplePlus offset _ leftArrow rightArrow) -> do
                 leftInputType <- addTypeVariabel
                 leftOutputType <- addTypeVariabel
                 rightInputType <- addTypeVariabel
                 rightOutputType <- addTypeVariabel
                 typeGreaterThanWithOffset offset (Sum leftInputType rightInputType) inputType
-                -- successInput <- typeGreaterThan (Sum leftInputType rightInputType) inputType
-                -- unless successInput $ failTypeMatch offset (Sum leftInputType rightInputType) inputType
                 typeGreaterThanWithOffset offset (Sum leftOutputType rightOutputType) outputType
-                -- successOutput <- typeGreaterThan (Sum leftOutputType rightOutputType) outputType
-                -- unless successOutput $ failTypeMatch offset (Sum leftOutputType rightOutputType) outputType
-                leftArrow' <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [leftInputType, leftOutputType]) leftArrow
-                rightArrow' <- assertType (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, rightOutputType]) rightArrow
-                return $ TypeWithBinaryArrowOperator TriplePlus arrowType leftArrow' rightArrow'
-            (BinaryArrowOperator TripleBar offset leftArrow rightArrow) -> do
+                -- leftArrow' <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [leftInputType, leftOutputType]) leftArrow
+                -- rightArrow' <- assertType (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, rightOutputType]) rightArrow
+                -- return $ TypeWithBinaryArrowOperator TriplePlus arrowType leftArrow' rightArrow'
+                possibleLeftArrows <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [leftInputType, leftOutputType]) leftArrow
+                combineAssertion possibleLeftArrows (TypeWithBinaryArrowOperator TriplePlus arrowType) (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, rightOutputType]) rightArrow
+                -- concat <$> mapM (\(leftArrow', state) ->
+                --     map (first $ TypeWithBinaryArrowOperator TriplePlus arrowType leftArrow') 
+                --         <$> assertTypeWithState state (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, rightOutputType]) rightArrow
+                --     ) possibleLeftArrows
+            (BinaryArrowOperator TripleBar offset _ leftArrow rightArrow) -> do
                 leftInputType <- addTypeVariabel
                 rightInputType <- addTypeVariabel
-                -- successInput <- typeGreaterThan onlyInputType inputType
-                -- unless successInput $ failTypeMatch offset onlyInputType inputType
                 typeGreaterThanWithOffset offset (Sum leftInputType rightInputType) inputType
-                -- successOutput <- typeGreaterThan (Sum leftOutputType rightOutputType) outputType
-                -- unless successOutput $ failTypeMatch offset (Sum leftOutputType rightOutputType) outputType
-                leftArrow' <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [leftInputType, outputType]) leftArrow
-                rightArrow' <- assertType (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, outputType]) rightArrow
-                return $ TypeWithBinaryArrowOperator TripleBar arrowType leftArrow' rightArrow'
+                -- leftArrow' <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [leftInputType, outputType]) leftArrow
+                -- rightArrow' <- assertType (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, outputType]) rightArrow
+                -- return $ TypeWithBinaryArrowOperator TripleBar arrowType leftArrow' rightArrow'
+                possibleLeftArrows <- assertType (AliasReference (Name (getOffsetFromValue leftArrow) arrowInstance) [leftInputType, outputType]) leftArrow
+                combineAssertion possibleLeftArrows (TypeWithBinaryArrowOperator TripleBar arrowType) (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, outputType]) rightArrow
+                -- concat <$> mapM (\(leftArrow', state) ->
+                --     map (first $ TypeWithBinaryArrowOperator TripleBar arrowType leftArrow') 
+                --         <$> assertTypeWithState state (AliasReference (Name (getOffsetFromValue rightArrow) arrowInstance) [rightInputType, outputType]) rightArrow
+                --     ) possibleLeftArrows
             _ -> failTypeInference arrowType content
 
-failTypeInference :: Type -> Value -> ParserWithDoubleState [Type] Program TypeWithValue
+returnTypeWithValueAndState :: TypeWithValue -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
+returnTypeWithValueAndState typeWithValue = do
+    state <- get
+    return [(typeWithValue, state)]
+
+assertTypeWithState :: [Type] -> Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
+assertTypeWithState state frame value = do
+    put state
+    assertType frame value
+
+combineAssertion :: [(TypeWithValue, [Type])] -> (TypeWithValue -> TypeWithValue -> TypeWithValue) -> Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
+combineAssertion possibilities combine frame content = do
+    result <- concat <$> mapM (\(x, state) -> do
+            (map (first $ combine x) <$> assertTypeWithState state frame content) <|> return []
+        ) possibilities
+    case result of
+        [] -> failTypeInference frame content
+        _ -> return result
+
+failTypeInference :: Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
 failTypeInference frame content = do
     setOffset (getOffsetFromValue content)
     references <- get
-    program <- lift get
-    fail $ "could not match " ++ displayReferentialType (ReferentialType frame references) ++ " with " ++ show content ++ "\n\n" ++ show program
+    -- program <- lift get
+    fail $ "could not match " ++ displayReferentialType (ReferentialType frame references) ++ " with " ++ show content
 
 failTypeMatch :: Type -> Type -> ParserWithDoubleState [Type] Program ()
 failTypeMatch superior inferior = do
     references <- get
-    program <- lift get
-    fail $ "could not match " ++ displayReferentialType (ReferentialType superior references) ++ " with " ++ displayReferentialType (ReferentialType inferior references) ++ "\n\n" ++ show program
-
--- setOffset offset
+    -- program <- lift get
+    fail $ "could not match " ++ displayReferentialType (ReferentialType superior references) ++ " with " ++ displayReferentialType (ReferentialType inferior references)
 
 typeGreaterThanWithOffset :: ParsingOffset -> Type -> Type -> ParserWithDoubleState [Type] Program ()
 typeGreaterThanWithOffset offset superior inferior = do
@@ -299,55 +348,26 @@ typeGreaterThan (AliasExtention index arguments) inferior = do
         -- (ForAllInstances []) -> return ()
         -- (ForAllInstances [_]) -> return ()
         -- ThisClass -> return ()
-        _ -> undefined
+        x -> fail $ "expected alias reference " ++ show x
 typeGreaterThan superior (AliasExtention index arguments) = do
     core <- gets (!! index)
     case core of
         (AliasReference name coreArguments) -> typeGreaterThan superior (AliasReference name (coreArguments ++ arguments))
         _ -> undefined
--- typeGreaterThan superior@(AliasReference superiorName superiorArguments) inferior@(AliasReference inferiorName inferiorArguments) =
---     if superiorName == inferiorName
---         then zipWithM_ typeGreaterThan superiorArguments inferiorArguments
---         else failTypeMatch superior inferior
-typeGreaterThan superior@(ForAllInstances requiredClasses) inferior@(AnyType index existingClasses) = do
+typeGreaterThan superior@(ForAllInstances _ requiredClasses) inferior@(AnyType index existingClasses) = do
     if all (`elem` requiredClasses) existingClasses
         then modify $ replace index $ AnyType index requiredClasses
         else failTypeMatch superior inferior
 typeGreaterThan superior (AnyType index classNames) = do
     mapM_ (resolveInstanceOf superior) classNames
-    modify $ replace index superior
+    modify $ replace index superior 
 typeGreaterThan (AnyType index classNames) inferior = do
     mapM_ (resolveInstanceOf inferior) classNames
     modify $ replace index inferior
-typeGreaterThan (ForAllInstances classNames) inferior = do
-    -- inferiorReferentialType <- gets $ ReferentialType inferior
-    -- instancesOfTypeNames <- lift $ gets $ map instanceClassName . filter ((== inferiorReferentialType) . instanceType) . instances
-    -- unlesmapM_ (isInstanceOf inferior) classNames
-    mapM_ (resolveInstanceOf inferior) classNames
--- typeGreaterThan superior inferior@(AliasReference inferiorName inferiorArguments) = do
---     equals <- case superior of
---         (AliasReference superiorName superiorArguments) ->
---             if superiorName == inferiorName
---                 then zipWithM_ typeGreaterThan superiorArguments inferiorArguments $> True
---                 else return False -- failTypeMatch superior inferior
---         _ -> return False
---     unless
---         equals
---         ( do
---             alias <- lift $ getAlias inferiorName
---             case alias of
---                 (TypeAlias _ _ Nothing) -> failTypeMatch superior inferior
---                 (TypeAlias _ _ (Just referentialType)) -> do
---                     increasedMainType <- addAlias inferiorArguments referentialType
---                     typeGreaterThan superior increasedMainType
---         )
--- typeGreaterThan (AliasReference name arguments) inferior = do
---     alias <- lift $ getAlias name
---     case alias of
---         (TypeAlias _ _ Nothing) -> undefined
---         (TypeAlias _ _ (Just referentialType)) -> do
---             increasedMainType <- addAlias arguments referentialType
---             typeGreaterThan increasedMainType inferior
+typeGreaterThan superior@(ForAllInstances superiorIndex superiorClassNames) inferior@(ForAllInstances inferiorIndex inferiorClassNames) = do
+    unless (superiorIndex == inferiorIndex) $ failTypeMatch superior inferior
+    -- unless (all (`elem` inferiorClassNames) inferiorClassNames) $ failTypeMatch superior inferior
+    -- mapM_ (resolveInstanceOf inferior) classNames
 typeGreaterThan (Product superiorX superiorY) (Product inferiorX inferiorY) = typeGreaterThan superiorX inferiorX >> typeGreaterThan superiorY inferiorY
 typeGreaterThan (Sum superiorX superiorY) (Sum inferiorX inferiorY) = typeGreaterThan superiorX inferiorX >> typeGreaterThan superiorY inferiorY
 typeGreaterThan superior inferior = do
@@ -356,26 +376,8 @@ typeGreaterThan superior inferior = do
             if superiorName == inferiorName
                 then zipWithM_ typeGreaterThan superiorArguments inferiorArguments $> True
                 else typeGreaterThanReducibleAliasReference False inferior superiorName superiorArguments
-        -- superiorAliasType <- aliasType <$> lift (getAlias superiorName)
-        -- case superiorAliasType of
-        --     (Just referentialType) -> do
-        --         increasedMainType <- addAlias superiorArguments referentialType
-        --         typeGreaterThan increasedMainType inferior $> True
-        --     Nothing -> return False
         (AliasReference name arguments, _) -> typeGreaterThanReducibleAliasReference False inferior name arguments
-        -- superiorAliasType <- aliasType <$> lift (getAlias name)
-        -- case superiorAliasType of
-        --     (Just referentialType) -> do
-        --         increasedMainType <- addAlias arguments referentialType
-        --         typeGreaterThan increasedMainType inferior $> True
-        --     Nothing -> return False
         (_, AliasReference name arguments) -> typeGreaterThanReducibleAliasReference True superior name arguments
-        -- superiorAliasType <- aliasType <$> lift (getAlias name)
-        -- case superiorAliasType of
-        --     (Just referentialType) -> do
-        --         increasedMainType <- addAlias arguments referentialType
-        --         typeGreaterThan superior increasedMainType $> True
-        --     Nothing -> return False
         _ -> return False
     unless (equalsBySameReference || superior == inferior) $ failTypeMatch superior inferior
 
@@ -391,70 +393,20 @@ typeGreaterThanReducibleAliasReference isSuperior other name arguments = do
             return True
         Nothing -> return False
 
--- superiorAlias <- lift $ getAlias superiorName
--- inferiorAlias <- lift $ getAlias inferiorName
-
 resolveInstanceOf :: Type -> Name -> ParserWithDoubleState [Type] Program ()
-resolveInstanceOf t@(ForAllInstances classNames) className = unless (className `elem` classNames) $ fail $ show t ++ " has no instance of " ++ nameString className
+resolveInstanceOf t@(ForAllInstances _ classNames) className = unless (className `elem` classNames) $ fail $ show t ++ " has no instance of " ++ nameString className
 resolveInstanceOf t className = do
     possibleReferentialTypes <- lift $ map instanceType <$> getInstances className
+    backup <- get
     success <-
         or
             <$> mapM
                 ( \possibleReferentialType -> do
                     possibleType <- addReferentialType possibleReferentialType
-                    (typeGreaterThan possibleType t $> True) <|> return False
+                    (typeGreaterThan possibleType t $> True) <|> (put backup >> return False)
                 )
                 possibleReferentialTypes
     unless success $ fail $ show t ++ " has no instance of " ++ nameString className
-
-{-
-typeGreaterThan :: Type -> Type -> ParserWithDoubleState [Type] Program Bool
-typeGreaterThan (TypeReference index) inferior = do
-    superior <- gets (!! index)
-    typeGreaterThan superior inferior
-typeGreaterThan superior (TypeReference index) = do
-    inferior <- gets (!! index)
-    typeGreaterThan superior inferior
-typeGreaterThan (AliasReference superiorName superiorArguments) (AliasReference inferiorName inferiorArguments) =
-    if superiorName == inferiorName
-        then and <$> zipWithM typeGreaterThan superiorArguments inferiorArguments
-        else return False
-typeGreaterThan (ForAllInstances requiredClasses) (AnyType index existingClasses) = do
-    if all (`elem` requiredClasses) existingClasses
-        then modify (replace index $ AnyType index requiredClasses) $> True
-        else return False
-typeGreaterThan superior (AnyType index classNames) = do
-    isInstanceOfAllClasses <- and <$> mapM (isInstanceOf superior) classNames
-    if isInstanceOfAllClasses
-        then modify (replace index superior) $> True
-        else return False
-typeGreaterThan (AnyType index classNames) inferior = do
-    isInstanceOfAllClasses <- and <$> mapM (isInstanceOf inferior) classNames
-    if isInstanceOfAllClasses
-        then modify (replace index inferior) $> True
-        else return False
-typeGreaterThan (ForAllInstances classNames) inferior = do
-    inferiorReferentialType <- gets $ ReferentialType inferior
-    -- let classNames = map snd classesWithOffsets
-    instancesOfTypeNames <- lift $ gets $ map instanceClassName . filter ((== inferiorReferentialType) . instanceType) . instances
-    return $ all (`elem` instancesOfTypeNames) classNames
-typeGreaterThan (Product superiorX superiorY) (Product inferiorX inferiorY) = (&&) <$> typeGreaterThan superiorX inferiorX <*> typeGreaterThan superiorY inferiorY
-typeGreaterThan (Sum superiorX superiorY) (Sum inferiorX inferiorY) = (&&) <$> typeGreaterThan superiorX inferiorX <*> typeGreaterThan superiorY inferiorY
-typeGreaterThan superior inferior = return $ superior == inferior
-
-isInstanceOf :: Type -> Name -> ParserWithDoubleState [Type] Program Bool
-isInstanceOf (ForAllInstances classNames) className = return $ className `elem` classNames
-isInstanceOf t className = do
-    possibleReferentialTypes <- lift $ map instanceType <$> getInstances className
-    or
-        <$> mapM
-            ( \possibleReferentialType -> do
-                possibleType <- addReferentialType possibleReferentialType
-                typeGreaterThan possibleType t
-            )
-            possibleReferentialTypes
--}
 
 addAlias :: [Type] -> ReferentialType -> ParserWithDoubleState [Type] Program Type
 addAlias arguments (ReferentialType unincreasedMainType otherTypesWithPlaceholders) = do
@@ -485,21 +437,92 @@ getTypeFromValue (EmptyTupleLiteral offset) = return $ AliasReference (Name offs
 getTypeFromValue (DefinedValue name) = do
     referentialType <- lift $ getTypeFromName name
     addReferentialType $ toAnyTypeReferences referentialType
-getTypeFromValue (DefinedValueFromInstance name index) = do
+getTypeFromValue (DefinedValueFromInstance name (Left index)) = do
     referentialType <- either id (!! index) <$> lift (getTypesFromName name)
     addReferentialType $ toAnyTypeReferences referentialType
-getTypeFromValue _ = undefined
+getTypeFromValue (UnaryArrowOperator Arr offset referentialType inner) = do
+    let isId = maybe False isIdArrow referentialType
+    innerType <- getTypeFromValue inner
+    inputType <- addTypeVariabel
+    outputType <- addTypeVariabel
+    let innerArrow = AliasReference (Name offset "Id") [inputType, outputType]
+    typeGreaterThanWithOffset offset innerArrow innerType 
+    index <- gets length
+    unless isId $ modify (++ [AnyType index ["Arrow"]])
+    return $ if isId then AliasReference (Name offset "Id") [inputType, outputType] else AliasExtention index [inputType, outputType]
+getTypeFromValue (BinaryArrowOperator ArrowComposition offset referentialType firstInner secondInner) = do
+    let isId = maybe False isIdArrow referentialType
+    firstInnerType <- getTypeFromValue firstInner
+    secondInnerType <- getTypeFromValue secondInner
+    inputType <- addTypeVariabel
+    outputType <- addTypeVariabel
+    sharedType <- addTypeVariabel
+    index <- gets length
+    modify (++ [AnyType index ["Arrow"]])
+    let firstInnerArrow = AliasExtention index [inputType, sharedType]
+    let secondInnerArrow = AliasExtention index [sharedType, outputType]
+    typeGreaterThanWithOffset offset firstInnerArrow firstInnerType
+    typeGreaterThanWithOffset offset secondInnerArrow secondInnerType
+    return $ AliasExtention index [inputType, outputType]
+getTypeFromValue x = fail $ show x
 
--- getTypeFromValue (DefinedValue name) = getTypeFromName name
---     | DefinedValueFromInstance Name Int
---     | ArrowComposition ParsingOffset Value Value
---     | ArrowConstant ParsingOffset Value
---     | ArrowFirst ParsingOffset Value
---     | ArrowSecond ParsingOffset Value
---     | TripleAsterisks ParsingOffset Value Value
---     | TripleAnd ParsingOffset Value Value
---     | ArrowRight ParsingOffset Value
---     | ArrowLeft ParsingOffset Value
---     | TriplePlus ParsingOffset Value Value
---     | TripleBar ParsingOffset Value Value
---     | Undefined ParsingOffset
+applyOperator :: ParsingOffset -> Value -> Value -> Value
+applyOperator offset operator inner = idArrow 
+  where
+    idArrow = BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) (BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) double first) app
+    first = UnaryArrowOperator ArrowFirst offset (Just $ idArrowType offset) $ BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) constF operator
+    constF = UnaryArrowOperator ArrowConstant offset (Just $ idArrowType offset) inner
+    app = DefinedValueFromInstance (Name offset "app") (Right $ idArrowType offset)
+    double = DefinedValue $ Name offset "double"
+-- arr f = double >>> first (const f >>> arr) >>> app
+
+assertArrowOperator :: Type -> Value -> ParsingOffset -> Value -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
+assertArrowOperator frame content offset operator inner = do
+    backup <- get
+    idPossibilities <- assertAtomicArrow frame content offset "Id" <|> return []
+    put backup
+    ioPossibilities <- assertAtomicArrow frame content offset "IO" <|> return []
+    put backup
+    specialPossibilities <- assertType frame (applyOperator offset operator inner) <|> return []
+    put backup
+    let possibilities = idPossibilities ++ ioPossibilities ++ specialPossibilities
+    case possibilities of
+        [] -> failTypeInference frame content
+        xs -> return xs
+
+    -- atomic <- (Just <$> assertAtomicArrow frame content offset "Id") <|> (put backup >> Just <$> assertAtomicArrow frame content offset "IO") <|> (put backup $> Nothing)
+    -- case atomic of
+    --     (Just x) -> return x
+    --     Nothing -> do
+    --         -- setOffset offset
+    --         -- fail "special arrow"
+    --         assertType frame $ applyOperator offset operator inner
+    -- possibleIndecies <-
+        -- concat
+        --     <$> mapM
+        --         ( \(index, fromInstance) -> do
+        --              backup <- get
+        --              ( do
+        --                 inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance
+        --                 typeGreaterThanWithOffset (nameOffset name) frame inferiorType
+        --                 state <- get
+        --                 put backup
+        --                 return [(TypeWithDefinedValueFromInstance frame name index, state)]
+        --                 ) <|> (put backup >> return [])
+        --              ) (zip [0 ..] fromInstances)
+    
+    -- let maybeAtomicArrow = case frame of 
+    --                                     (AliasReference name arguments) -> if name == "Id" || name == "IO" then Just (name, arguments) else Nothing 
+    --                                     _ -> Nothing
+    -- case maybeAtomicArrow of
+    --     Just (name, [inputType, outputType]) -> assertArrow (nameString name) inputType outputType content
+    --     Nothing -> assertType frame $ applyOperator offset (DefinedValue $ Name offset $ show operator) innerArrow
+    
+assertAtomicArrow :: Type -> Value -> ParsingOffset -> String -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
+assertAtomicArrow frame content offset atomicType = do
+    inputType <- addTypeVariabel
+    outputType <- addTypeVariabel
+    let arrow = AliasReference (Name offset atomicType) [inputType, outputType]
+    typeGreaterThanWithOffset offset frame arrow
+    assertArrow atomicType inputType outputType content
+

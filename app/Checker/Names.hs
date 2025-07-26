@@ -62,14 +62,6 @@ putPossibleValueNames = do
         existingValueNames <- gets valueNames
         modify (\names -> names{valueNames = name : existingValueNames})
 
---    foldM f [] classes
---  where
--- f :: [Name] -> TypeClass -> ParserWithState Program [Name]
---    f names (TypeClass name _) =
---      if name `elem` names
---        then fail ("multiple definitions for " ++ nameString name)
---      else return (name : names)
-
 assertClassNameExist :: Name -> ParserWithDoubleState Names Program ()
 assertClassNameExist name = do
     exists <- gets $ (name `elem`) . classNames
@@ -123,8 +115,8 @@ assertTypeNameSafety strictArgumentCounts referentialType@(ReferentialType t ref
                 lift $ setOffset offset
                 fail $ "expected " ++ show (requiredArgumentCount - length coreArguments) ++ " arguments but recieved " ++ show (length extendedArguments) ++ show arguments
             mapM_ check arguments
-        (ForAllInstances []) -> return ()
-        (ForAllInstances [_]) -> return ()
+        (ForAllInstances _ []) -> return ()
+        (ForAllInstances _ [_]) -> return ()
         ThisClass -> return ()
         _ -> undefined
     check (AliasReference name@(Name offset _) arguments) = do
@@ -136,7 +128,7 @@ assertTypeNameSafety strictArgumentCounts referentialType@(ReferentialType t ref
         mapM_ check arguments
     check (TypeReference index) = do
         check $ mainType $ resolveReference referentialType index
-    check (ForAllInstances classes) = do
+    check (ForAllInstances _ classes) = do
         mapM_ assertClassNameExist classes
     check _ = return ()
 
@@ -147,16 +139,9 @@ assertValueNameSafety = check
     check (ProductLiteral _ x y) = check x >> check y
     check (SumLiteral _ _ x) = check x
     check (DefinedValue name) = assertValueNameExist name
-    check (BinaryArrowOperator _ _ x y) = check x >> check y
-    check (UnaryArrowOperator _ _ x) = check x
-    -- check (ArrowFirst _ x) = check x
-    -- check (ArrowSecond _ x) = check x
-    -- check (TripleAsterisks _ x y) = check x >> check y
-    -- check (TripleAnd _ x y) = check x >> check y
-    -- check (ArrowRight _ x) = check x
-    -- check (ArrowLeft _ x) = check x
-    -- check (TriplePlus _ x y) = check x >> check y
-    -- check (TripleBar _ x y) = check x >> check y
+    check (DefinedValueFromInstance name (Right instancedType)) = assertValueNameExist name >> assertTypeNameSafety False instancedType
+    check (BinaryArrowOperator _ _ _ x y) = check x >> check y
+    check (UnaryArrowOperator _ _ _ x) = check x
     check _ = return ()
 
 assertInstanceNameSafety :: Instance -> ParserWithDoubleState Names Program ()

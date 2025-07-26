@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parser.Types (typeP, aliasP, classP, typeConstraintsP, typeWithExistingConstraintsP, Constraint (..), typeTailP, toReferentialType, constrainedTypeP) where
+-- module Parser.Types (typeP, aliasP, classP, typeConstraintsP, typeWithExistingConstraintsP, Constraint (..), typeTailP, toReferentialType, constrainedTypeP) where
+module Parser.Types where
 
 import Ast
 import Control.Monad.Combinators.Expr
@@ -60,7 +61,7 @@ typeWithExistingConstraintsP :: [Constraint] -> Parser ReferentialType
 typeWithExistingConstraintsP constraints = toReferentialType <$> runStateT (((try (lift typeConstraintsP) >>= put) <|> return ()) >> typeTailP True) constraints
 
 toReferentialType :: (Type, [Constraint]) -> ReferentialType
-toReferentialType (finalType, constraints) = ReferentialType finalType $ map (\(Constraint _ classNames) -> ForAllInstances classNames) constraints
+toReferentialType (finalType, constraints) = ReferentialType finalType $ zipWith (\index (Constraint _ classNames) -> ForAllInstances index classNames) [0..] constraints
 
 typeConstraintsP :: Parser [Constraint]
 typeConstraintsP = (((: []) <$> singleConstraintP) <|> (mergeConstraints <$> parens (sepBy singleConstraintP (symbol ",")))) <* symbol "=>"
@@ -83,12 +84,7 @@ typeTailP inParens = makeExprParser (typeTermP inParens) (typeOperatorTable inPa
 typeTermP :: Bool -> ParserWithState [Constraint] Type
 typeTermP inParens =
     choice
-        [ -- lift $ symbol "Bool" $> AliasReference (Name "Bool" []
-          -- , lift $ symbol "Char" $> AliasReference "Char" []
-          -- , lift $ symbol "Int" $> AliasReference "Int" []
-          -- , lift $ symbol "Float" $> AliasReference "Float" []
-          -- , lift $ symbol "()" $> AliasReference "()" []
-          try $ AliasReference <$> lift upperCaseNameP <*> if inParens then many (try $ typeTailP False) else return []
+        [ try $ AliasReference <$> lift upperCaseNameP <*> if inParens then many (try $ typeTailP False) else return []
         , constrainedTypeP inParens
         , parensWithState $ typeTailP True
         ]
@@ -119,7 +115,7 @@ typeOperatorTable inParens =
                         return (\x y -> AliasReference (Name offset "Id") [x, y])
                     )
                 ]
-            , [binaryWithState "," Product]
-            , [binaryWithState "|" Sum]
+            , [InfixN (Product <$ lift (symbol ","))]
+            , [InfixN (Sum <$ lift (symbol "|"))]
             ]
         else []

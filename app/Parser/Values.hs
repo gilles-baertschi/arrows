@@ -6,6 +6,7 @@ import Ast
 import Control.Monad
 import Control.Monad.Combinators.Expr
 import Data.Functor
+import Data.List
 import Data.Text (pack)
 import Parser.Primitives
 import Parser.Types
@@ -23,7 +24,7 @@ definitionP = nonIndented p
         _ <- newLineP
         _ <- symbol $ pack $ nameString name
         _ <- symbol "="
-        value <- valueP
+        value <- valueP True
         _ <- newLineP
         return $ Definition name referentialType value
 
@@ -33,7 +34,7 @@ instanceP = nonIndented (L.indentBlock newLineP p)
     member = do
         memberName <- lowerCaseNameP
         _ <- symbol "="
-        memberValue <- valueP
+        memberValue <- valueP True
         return (memberName, memberValue)
     p = do
         _ <- symbol "instance"
@@ -43,8 +44,8 @@ instanceP = nonIndented (L.indentBlock newLineP p)
         _ <- "where"
         return $ L.IndentSome Nothing (return . Instance instancedType nameOfClass) member
 
-valueP :: Parser Value
-valueP = makeExprParser valueTermP valueOperatorTable
+valueP :: Bool -> Parser Value
+valueP inParens = makeExprParser (valueTermP inParens) (valueOperatorTable inParens)
 
 emptyTupleP :: Parser Value
 emptyTupleP = EmptyTupleLiteral <$> getOffset <* symbol "()"
@@ -69,15 +70,49 @@ compilerDefinedP :: Parser Value
 compilerDefinedP = Undefined <$> getOffset <* symbol "undefined"
 
 definedValueP :: Parser Value
-definedValueP = DefinedValue <$> lowerCaseNameP
+definedValueP = do 
+    (name, referentialType) <- lowerCaseNameWithTypeP
+    return $ maybe (DefinedValue name) (DefinedValueFromInstance name . Right) referentialType
+
+definedValueWithPrefixP :: Parser Value
+definedValueWithPrefixP = do
+    (name, referentialType) <- lowerCaseNameWithTypeP
+    let maybeArrowOperator = snd <$> find ((== name) . fst) operatorNamePairs
+    case maybeArrowOperator of
+        Nothing -> return $ maybe (DefinedValue name) (DefinedValueFromInstance name . Right) referentialType
+        (Just arrowOperator) -> do
+            argument <- optional $ try $ valueP False
+            case argument of
+                Nothing -> return $ maybe (DefinedValue name) (DefinedValueFromInstance name . Right) referentialType
+                (Just value) -> return $ arrowOperator (nameOffset name) referentialType value
+  where
+    operatorNamePairs =
+        [ ("first", UnaryArrowOperator ArrowFirst)
+        , ("second", UnaryArrowOperator ArrowSecond)
+        , ("left", UnaryArrowOperator ArrowLeft)
+        , ("right", UnaryArrowOperator ArrowRight)
+        , ("const", UnaryArrowOperator ArrowConstant)
+        , ("arr", UnaryArrowOperator Arr)
+        , ("l", \offset _ -> SumLiteral offset False)
+        , ("r", \offset _ -> SumLiteral offset True)
+        ]
+
+lowerCaseNameWithTypeP :: Parser (Name, Maybe ReferentialType)
+lowerCaseNameWithTypeP = do 
+    name <- lowerCaseNameP
+    referentialType <- typeHintP 
+    return (name, referentialType)
+
+typeHintP :: Parser (Maybe ReferentialType)
+typeHintP = optional $ between (symbol "[") (symbol "]") typeP
 
 productP :: Parser Value
-productP = parens $ ProductLiteral <$> getOffset <*> valueP <* symbol "," <*> valueP
+productP = parens $ ProductLiteral <$> getOffset <*> valueP True <* symbol "," <*> valueP True
 
 listP :: Parser Value
 listP = lexeme $ between (symbol "[") (symbol "]") p
   where
-    p = assembleList <$> sepBy ((,) <$> getOffset <*> valueP) (symbol ",") <*> getOffset
+    p = assembleList <$> sepBy ((,) <$> getOffset <*> valueP True) (symbol ",") <*> getOffset
 
 assembleList :: [(ParsingOffset, Value)] -> ParsingOffset -> Value
 assembleList [] finalOffset = SumLiteral finalOffset False (EmptyTupleLiteral finalOffset)
@@ -123,43 +158,46 @@ stringP = lexeme $ do
 --     left = between (char '(') (char '|') ((False,) <$> valueP)
 --     right = between (char '|') (char ')') ((True,) <$> valueP)
 
-valueTermP :: Parser Value
-valueTermP =
+valueTermP :: Bool -> Parser Value
+valueTermP inParens =
     choice
         [ emptyTupleP
         , compilerDefinedP
         , boolP
         , try floatP
         , intP
-        , try charP
-        , try definedValueP
+        , charP
+        , try $ if inParens then definedValueWithPrefixP else definedValueP
         , listP
         , stringP
         , try productP
-        , parens valueP
+        , parens $ valueP True
         ]
 
-valueOperatorTable :: [[Operator Parser Value]]
-valueOperatorTable =
-    [
-        [ prefix "first" (UnaryArrowOperator ArrowFirst <$> getOffset)
-        , prefix "second" (UnaryArrowOperator ArrowSecond <$> getOffset)
-        , prefix "left" (UnaryArrowOperator ArrowLeft <$> getOffset)
-        , prefix "right" (UnaryArrowOperator ArrowRight <$> getOffset)
-        , prefix "const" (UnaryArrowOperator ArrowConstant <$> getOffset)
-        , prefix "arr" (UnaryArrowOperator Arr <$> getOffset)
-        , prefix "l" (flip SumLiteral False <$> getOffset)
-        , prefix "r" (flip SumLiteral True <$> getOffset)
-        ]
-    ,
-        [ binaryN "***" (BinaryArrowOperator TripleAsterisks <$> getOffset)
-        , binaryN "&&&" (BinaryArrowOperator TripleAnd <$> getOffset)
-        , binaryN "+++" (BinaryArrowOperator TriplePlus <$> getOffset)
-        , binaryN "|||" (BinaryArrowOperator TripleBar <$> getOffset)
-        ]
-    ,
-        [ binaryR ">>>" (BinaryArrowOperator ArrowComposition <$> getOffset)
-        , binaryR "<<<" (flip . BinaryArrowOperator ArrowComposition <$> getOffset)
-        ]
-        -- , [binaryN "," (ProductLiteral <$> getOffset)]
-    ]
+valueOperatorTable :: Bool -> [[Operator Parser Value]]
+valueOperatorTable inParens =
+    if inParens
+        then
+            [
+                [ --        Prefix (UnaryArrowOperator ArrowFirst <$> getOffset <* alphaNumCharSymbol "first" <* lookAhead valueP)
+                  --        , Prefix (UnaryArrowOperator ArrowSecond <$> getOffset <* alphaNumCharSymbol "second")
+                  --        , Prefix (UnaryArrowOperator ArrowLeft <$> getOffset <* alphaNumCharSymbol "left")
+                  --        , Prefix (UnaryArrowOperator ArrowRight <$> getOffset <* alphaNumCharSymbol "right")
+                  --  Prefix (UnaryArrowOperator ArrowConstant Nothing <$> getOffset <* alphaNumCharSymbol "const")
+                  --        , Prefix (UnaryArrowOperator Arr <$> getOffset <* alphaNumCharSymbol "arr")
+                  -- Prefix (flip SumLiteral False <$> getOffset <* alphaNumCharSymbol "l")
+                  -- , Prefix (flip SumLiteral True <$> getOffset <* alphaNumCharSymbol "r")
+                ]
+            ,
+                [ InfixN (BinaryArrowOperator TripleAsterisks <$> getOffset <*> (symbol "***" *> typeHintP))
+                , InfixN (BinaryArrowOperator TripleAnd <$> getOffset <*> (symbol "&&&" *> typeHintP))
+                , InfixN (BinaryArrowOperator TriplePlus <$> getOffset <*> (symbol "+++" *> typeHintP))
+                , InfixN (BinaryArrowOperator TripleBar <$> getOffset <*> (symbol "|||" *> typeHintP))
+
+                ]
+            ,
+                [ InfixR (BinaryArrowOperator ArrowComposition <$> getOffset <*> (symbol ">>>" *> typeHintP))
+                , InfixR (flip <$> (BinaryArrowOperator ArrowComposition <$> getOffset <*> (symbol "<<<" *> typeHintP)))
+                ]
+            ]
+        else []

@@ -19,22 +19,22 @@ import Data.List
 import Data.String
 
 data Program = Program {typeClasses :: [TypeClass], instances :: [Instance], definitions :: [Definition], aliases :: [TypeAlias]}
-    deriving (Show, Read, Eq, Ord)
+    deriving (Show, Eq, Ord)
 
 data TypeClass = TypeClass {typeClassName :: Name, typeClassParents :: [Name], typeClassMembers :: [(Name, ReferentialType)]}
-    deriving (Show, Read, Eq, Ord)
+    deriving (Show, Eq, Ord)
 
 data Instance = Instance {instanceType :: ReferentialType, instanceClassName :: Name, instanceMembers :: [(Name, Value)]}
-    deriving (Show, Read, Eq, Ord)
+    deriving (Show, Eq, Ord)
 
 data Definition = Definition {definitionName :: Name, definitionType :: ReferentialType, definitionValue :: Value}
-    deriving (Show, Read, Eq, Ord)
+    deriving (Show, Eq, Ord)
 
 data TypeAlias = TypeAlias {aliasName :: Name, aliasArgumentCount :: Int, aliasType :: Maybe ReferentialType}
-    deriving (Show, Read, Eq, Ord)
+    deriving (Show, Eq, Ord)
 
 data Name = Name {nameOffset :: ParsingOffset, nameString :: String}
-    deriving (Read, Ord)
+    deriving (Ord)
 
 instance IsString Name where
     fromString = Name 0
@@ -48,10 +48,10 @@ data Value
     | CharLiteral ParsingOffset Char
     | EmptyTupleLiteral ParsingOffset
     | DefinedValue Name
-    | DefinedValueFromInstance Name Int
+    | DefinedValueFromInstance Name (Either Int ReferentialType)
     | Undefined ParsingOffset
-    | UnaryArrowOperator UnaryArrowOperator ParsingOffset Value
-    | BinaryArrowOperator BinaryArrowOperator ParsingOffset Value Value
+    | UnaryArrowOperator UnaryArrowOperator ParsingOffset (Maybe ReferentialType) Value
+    | BinaryArrowOperator BinaryArrowOperator ParsingOffset (Maybe ReferentialType) Value Value
     -- | Arr ParsingOffset Value
     -- | ArrowComposition ParsingOffset Value Value
     -- | ArrowConstant ParsingOffset Value
@@ -63,13 +63,13 @@ data Value
     -- | ArrowLeft ParsingOffset Value
     -- | TriplePlus ParsingOffset Value Value
     -- | TripleBar ParsingOffset Value Value
-    deriving (Read, Eq, Ord, Show)
+    deriving (Eq, Ord, Show)
 
 data UnaryArrowOperator = Arr | ArrowConstant | ArrowFirst | ArrowSecond | ArrowRight | ArrowLeft
-    deriving (Read, Eq, Ord, Show)
+    deriving (Eq, Ord)
 
 data BinaryArrowOperator = ArrowComposition | TripleAsterisks | TripleAnd | TriplePlus | TripleBar
-    deriving (Read, Eq, Ord, Show)
+    deriving (Eq, Ord)
 
 data TypeWithValue
     = TypeWithProductLiteral Type TypeWithValue TypeWithValue
@@ -96,10 +96,10 @@ data TypeWithValue
     -- | TypeWithArrowLeft Type TypeWithValue
     -- | TypeWithTriplePlus Type TypeWithValue TypeWithValue
     -- | TypeWithTripleBar Type TypeWithValue TypeWithValue
-    deriving (Read, Eq, Ord, Show)
+    deriving (Eq, Ord, Show)
 
 data ReferentialType = ReferentialType {mainType :: Type, otherTypes :: [Type]}
-    deriving (Read, Ord, Show)
+    deriving (Ord, Show)
 
 resolveReference :: ReferentialType -> Int -> ReferentialType
 resolveReference (ReferentialType _ references) index = ReferentialType (references !! index) references
@@ -112,7 +112,7 @@ type ParsingOffset = Int
 data Type
     = Product Type Type
     | Sum Type Type
-    | ForAllInstances [Name]
+    | ForAllInstances Int [Name]
     | AnyType Int [Name]
     | AliasReference Name [Type]
     | AliasExtention Int [Type]
@@ -123,13 +123,28 @@ data Type
     --    | Int
     --    | Char
     --    | EmptyTuple
-    deriving (Read, Eq, Ord, Show)
+    deriving (Eq, Ord, Show)
 
 instance Eq Name where
     (Name _ x) == (Name _ y) = x == y
 
 instance Show Name where
     show = show . nameString
+
+instance Show UnaryArrowOperator where
+    show Arr = "arr"
+    show ArrowConstant = "const"
+    show ArrowFirst = "first"
+    show ArrowSecond = "second"
+    show ArrowRight = "right"
+    show ArrowLeft = "left"
+
+instance Show BinaryArrowOperator where
+    show ArrowComposition = ">>>"
+    show TripleAsterisks = "***" 
+    show TripleAnd = "&&&"
+    show TriplePlus = "+++"
+    show TripleBar = "|||"
 
 instance Eq ReferentialType where
     (ReferentialType mainTypeX otherTypesX) == (ReferentialType mainTypeY otherTypesY) = evalState (eq mainTypeX mainTypeY) (otherTypesX, otherTypesY)
@@ -159,7 +174,7 @@ instance Eq ReferentialType where
             eq1 <- eq x1 y1
             eq2 <- eq x2 y2
             return $ eq1 && eq2
-        eq (ForAllInstances unsortedClassesX) (ForAllInstances unsortedClassesY) = do
+        eq (ForAllInstances _ unsortedClassesX) (ForAllInstances _ unsortedClassesY) = do
             let classesX = sort unsortedClassesX
             let classesY = sort unsortedClassesY
             return $ classesX == classesY

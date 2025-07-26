@@ -1,0 +1,4 @@
+extended fp:
+
+0, fp
+1, arg, fp
