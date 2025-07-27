@@ -14,6 +14,11 @@ pop rbp
 ret
 
 id:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+mov rsp, rbp
+pop rbp
 ret
 
 fst:
@@ -80,6 +85,87 @@ mov rdx, [rbp+16]
 push qword [rdx] 
 push qword [rdx+8]
 call call
+mov rsp, rbp
+pop rbp
+ret
+
+flip:
+push rbp
+mov rbp, rsp
+push 16
+call alloc
+mov rdi, [rbp+16]
+mov rdx, [rdi+8]
+mov [rax], rdx
+mov rdx, [rdi]
+mov [rax+8], rdx
+mov rsp, rbp
+pop rbp
+ret
+
+flip_choice:
+push rbp
+mov rbp, rsp
+push 16
+call alloc
+mov rdi, [rbp+16]
+mov rdx, [rdi]
+xor rdx, 1
+mov [rax], rdx
+mov rdx, [rdi+8]
+mov [rax+8], rdx
+mov rsp, rbp
+pop rbp
+ret
+
+reorder_to_front:
+; (a, (b, c)) -> ((a, b), c)
+push rbp
+mov rbp, rsp
+push 16
+call alloc
+mov rdx, rax
+push 16
+call alloc
+mov rdi, [rbp+16]
+mov rsi, [rdi+8]
+; rdx -> (a, b)
+; rax -> ((a, b), c)
+; rdi -> (a, (b, c))
+; rsi -> (b, c)
+mov rcx, [rdi]
+mov [rdx], rcx
+mov rcx, [rsi]
+mov [rdx+8], rcx
+mov [rax], rdx
+mov rcx, [rsi+8]
+mov [rax+8], rcx
+mov rsp, rbp
+pop rbp
+ret
+
+reorder_to_back:
+; ((a, b), c) -> (a, (b, c))
+push rbp
+mov rbp, rsp
+push 16
+call alloc
+mov rdx, rax
+push 16
+call alloc
+mov rdi, [rbp+16]
+mov rsi, [rdi]
+; rdx -> (b, c)
+; rax -> (a, (b, c))
+; rdi -> ((a, b), c)
+; rsi -> (a, b)
+mov rcx, [rsi+8]
+mov [rdx], rcx
+mov rcx, [rdi+8]
+mov [rdx+8], rcx
+mov [rax+8], rdx
+mov rcx, [rsi]
+mov [rax], rcx
 mov rsp, rbp
 pop rbp
 ret
@@ -218,6 +304,7 @@ cmp rax, rcx
 sete al
 movzx rax, al
 mov rsp, rbp
+pop rbp
 ret
 
 less_int:
@@ -271,6 +358,30 @@ movzx rax, al
 mov rsp, rbp
 pop rbp
 ret
+
+; is_left:
+; push rbp
+; mov rbp, rsp
+; mov rax, [rbp+16]
+; mov rax, [rax]
+; test rax, rax
+; setz al
+; mov rax, al
+; mop rsp, rbp
+; pop rbp
+; ret
+;
+; is_right:
+; push rbp
+; mov rbp, rsp
+; mov rax, [rbp+16]
+; mov rax, [rax]
+; test rax, rax
+; setnz al
+; mov rax, al
+; mop rsp, rbp
+; pop rbp
+; ret
 
 composition:
 push rbp

@@ -12,6 +12,7 @@ import Parser.Primitives
 import Parser.Types
 import Text.Megaparsec
 import Text.Megaparsec.Char
+import Data.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 
 definitionP :: Parser Definition
@@ -22,7 +23,7 @@ definitionP = nonIndented p
         _ <- symbol "::"
         referentialType <- typeP
         _ <- newLineP
-        _ <- symbol $ pack $ nameString name
+        _ <- symbol $ pack $ if isAlpha $ head (nameString name) then nameString name else "(" ++ nameString name ++ ")"
         _ <- symbol "="
         value <- valueP True
         _ <- newLineP
@@ -124,40 +125,6 @@ stringP = lexeme $ do
     characters <- stringLiteralP
     return $ assembleList (map ((offset,) . CharLiteral offset) characters) offset
 
--- unaryArrowOperatorP :: Parser Value
--- unaryArrowOperatorP = UnaryArrowOperator <$> operatorP <*> getOffset <*> operandP
---   where
---     operatorP =
---         choice
---             [ symbol "const" $> ArrowConstant
---             , symbol "arr" $> Arr
---             , symbol "first" $> ArrowFirst
---             , symbol "second" $> ArrowSecond
---             , symbol "left" $> ArrowLeft
---             , symbol "right" $> ArrowRight
---             ]
---     operandP =
---         choice
---             [ emptyTupleP
---             , compilerDefinedP
---             , boolP
---             , try floatP
---             , intP
---             , charP
---             , try definedValueP
---             , try sumLiteralP
---             , parens valueP
---             ]
-
--- sumLiteralP :: Parser Value
--- sumLiteralP = do
---     offset <- getOffset
---     (boolChoice, value) <- left <|> right
---     return $ SumLiteral offset boolChoice value
---   where
---     left = between (char '(') (char '|') ((False,) <$> valueP)
---     right = between (char '|') (char ')') ((True,) <$> valueP)
-
 valueTermP :: Bool -> Parser Value
 valueTermP inParens =
     choice
@@ -179,16 +146,6 @@ valueOperatorTable inParens =
     if inParens
         then
             [
-                [ --        Prefix (UnaryArrowOperator ArrowFirst <$> getOffset <* alphaNumCharSymbol "first" <* lookAhead valueP)
-                  --        , Prefix (UnaryArrowOperator ArrowSecond <$> getOffset <* alphaNumCharSymbol "second")
-                  --        , Prefix (UnaryArrowOperator ArrowLeft <$> getOffset <* alphaNumCharSymbol "left")
-                  --        , Prefix (UnaryArrowOperator ArrowRight <$> getOffset <* alphaNumCharSymbol "right")
-                  --  Prefix (UnaryArrowOperator ArrowConstant Nothing <$> getOffset <* alphaNumCharSymbol "const")
-                  --        , Prefix (UnaryArrowOperator Arr <$> getOffset <* alphaNumCharSymbol "arr")
-                  -- Prefix (flip SumLiteral False <$> getOffset <* alphaNumCharSymbol "l")
-                  -- , Prefix (flip SumLiteral True <$> getOffset <* alphaNumCharSymbol "r")
-                ]
-            ,
                 [ InfixN (BinaryArrowOperator TripleAsterisks <$> getOffset <*> (symbol "***" *> typeHintP))
                 , InfixN (BinaryArrowOperator TripleAnd <$> getOffset <*> (symbol "&&&" *> typeHintP))
                 , InfixN (BinaryArrowOperator TriplePlus <$> getOffset <*> (symbol "+++" *> typeHintP))

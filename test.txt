@@ -1,41 +1,6 @@
 main :: IO () ()
 -- main = id
--- main = const "ABC" >>> print
-main = arr test >>> putChar >>> const '\n' >>> putChar
+main = arr test >>> print >>> const '\n' >>> putChar
 
-test :: () -> Char
-test = const[Id] (f, (123, "_")) >>> app >>> fst
-
-f :: State String Int Char 
-f = arr singleDigitToChar -- double >>> first (const singleDigitToChar >>> arr) >>> app
-
-type State s a b = (a, s) -> (b, s)
-
-instance Arrow (State s) where
-    id = id[Id]
-    arr = first[Id] -- Id a b -> Id (a, s) (b, s)
-    (>>>) = (>>>)[Id] -- (Id (a, s) (b, s), Id (b, s) (c, s)) -> Id (a, s) (c, s)
-    first = first[Id] >>> first[Id] -- Id a b -> Id (a, c) (b, c) -- Id (a, s) (b, s) -> Id ((a, c), s) ((b, c), s)
-    second = first[Id] >>> second[Id]
-    (***) = undefined -- first (first) >>> second (second) -- (y a c, y b d) -> y (a, b) (c, d) -- (Id (a, s) (c, s), Id (b, s) (d, s)) -> Id ((a, b), s) ((c, d), s)
-    (&&&) = undefined -- first first >>> (&&&)
-
--- arr f = double >>> first (const f >>> arr) >>> app
-
-put :: State s s ()
-put = fst >>> double >>> const[State s] ()
-
-get :: State s a s
-get = snd >>> [Id] double
-
--- runWriter :: Writer s a b => ((w), (a, s)) -> (b, s) -- Id (Id (a, s) (b, s), (a, s)) (b, s) 
--- runWriter = app
-
-instance Show Int where
-    show = singleDigitToChar >>> show -- singleDigitToChar &&& (next >>> right show)
-
--- next :: Int -> (Int | Int)
--- next = double >>> second (const 10) >>> div >>> double >>> first (double >>> first (const 0) >>> eq >>> not) >>> choice
-
-singleDigitToChar :: Int -> Char
-singleDigitToChar = double >>>[Id] second[Id] (const[Id] 10) >>> mod >>> double >>>[Id] first[Id] (const[Id] 48) >>>[Id] add >>>[Id] chr
+test :: () -> String
+test = const[Id] (9989) >>> show 

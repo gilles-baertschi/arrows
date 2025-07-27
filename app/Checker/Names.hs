@@ -145,10 +145,11 @@ assertValueNameSafety = check
     check _ = return ()
 
 assertInstanceNameSafety :: Instance -> ParserWithDoubleState Names Program ()
-assertInstanceNameSafety (Instance _ className members) = do
+assertInstanceNameSafety (Instance referentialType className members) = do
     assertClassNameExist className
     let memberNames = map fst members
-    requiredMemberNames <- lift $ gets $ map fst . typeClassMembers . head . filter ((className ==) . typeClassName) . typeClasses
+    thisClass <- lift $ gets $ head . filter ((className ==) . typeClassName) . typeClasses
+    let requiredMemberNames = map fst $ typeClassMembers thisClass
     unless (allUnique memberNames) $ do
         setOffset $ nameOffset className
         fail "multiple definitions for same member of instance"
@@ -164,3 +165,8 @@ assertInstanceNameSafety (Instance _ className members) = do
             fail $ nameString name ++ " is not part of the class " ++ nameString className
         )
         memberNames
+    let requiredParents = typeClassParents thisClass
+    actualParents <- lift $ gets $ map instanceClassName . filter ((== referentialType) . instanceType) . instances
+    unless (all (`elem` actualParents) requiredParents) $ do
+        setOffset $ nameOffset className
+        fail "not all required instances exist"

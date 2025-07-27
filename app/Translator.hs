@@ -27,8 +27,8 @@ translate =
     do
         compilerDefinitionsAsTranslated <-
             mapM
-                ( ( \(maybeClassName, name) -> case maybeClassName of
-                        (Just className) -> TranslatedDefinition (Just name) . Just <$> getIndexFromNameAndClass className name <*> return Nothing <*> return Nothing
+                ( ( \(maybeInstancType, name) -> case maybeInstancType of
+                        (Just instanceType) -> TranslatedDefinition (Just name) . Just . head <$> getIndeciesFromNameAndInstancType name instanceType <*> return Nothing <*> return Nothing
                         Nothing -> return $ TranslatedDefinition (Just name) Nothing Nothing Nothing
                   )
                     . snd
@@ -55,18 +55,22 @@ translateDefinition name maybeIndex maybeReferentialType = do
     eitherDefinitions <- lift $ getDefinitionsFromName name
     let definition = either id (!! fromMaybe 0 maybeIndex) eitherDefinitions
     let referentialType = fromMaybe (definitionType definition) maybeReferentialType
-    [(mainTypeWithValue, mainTypeReferences)] <- lift $ assertReferentialType referentialType $ definitionValue definition
-    function <- translateInContext
-        ( do
-            modify $ \state ->
-                state
-                    { stateReferences = mainTypeReferences
-                    , stateDefinitions = stateDefinitions state ++ [TranslatedDefinition (Just name) maybeIndex (Just referentialType) Nothing]
-                    }
-            translateValue mainTypeWithValue >>= callReturn "[rbp+16]"
-        )
-    return $ ReturnFunctionName function
-
+    -- [(mainTypeWithValue, mainTypeReferences)] <- lift $ assertReferentialType referentialType $ definitionValue definition
+    x <- lift $ assertReferentialType referentialType $ definitionValue definition
+    case x of
+        [(mainTypeWithValue, mainTypeReferences)] -> do
+            function <- translateInContext
+                ( do
+                    modify $ \state ->
+                        state
+                            { stateReferences = mainTypeReferences
+                            , stateDefinitions = stateDefinitions state ++ [TranslatedDefinition (Just name) maybeIndex (Just referentialType) Nothing]
+                            }
+                    translateValue mainTypeWithValue >>= callReturn "[rbp+16]"
+                )
+            return $ ReturnFunctionName function
+        _ -> fail $ show maybeReferentialType
+    
 translateInContext :: ParserWithDoubleState TranslationState Program () -> ParserWithDoubleState TranslationState Program String
 translateInContext action = do
     translationIndex <- gets $ length . stateDefinitions
@@ -283,15 +287,15 @@ callReturn :: String -> ReturnType -> ParserWithDoubleState TranslationState Pro
 callReturn argument (ReturnFunctionName name) = write $ "push qword " ++ argument ++ "\ncall " ++ name ++ "\n"
 callReturn argument ReturnValueInRax = write $ "push rax\npush qword " ++ argument ++ "\ncall call\n"
 
-compilerDefinitions :: [(String, (Maybe Name, Name))]
+compilerDefinitions :: [(String, (Maybe ReferentialType, Name))]
 compilerDefinitions =
     [ ("put_char", (Nothing, "putChar"))
     , ("read_char", (Nothing, "readChar"))
     , ("fst", (Nothing, "fst"))
     , ("snd", (Nothing, "snd"))
     , ("double", (Nothing, "double"))
-    , ("id", (Just "Id", "id"))
-    , ("app", (Just "Id", "app"))
+    , ("id", (Just $ idArrowType 0, "id"))
+    , ("app", (Just $ idArrowType 0, "app"))
     , ("add", (Nothing, "add"))
     , ("sub", (Nothing, "sub"))
     , ("mul", (Nothing, "mul"))
@@ -305,20 +309,28 @@ compilerDefinitions =
     , ("id", (Nothing, "chr"))
     , ("id", (Nothing, "ord"))
     , ("id", (Nothing, "choice"))
-    , ("eq", (Nothing, "=="))
-    , ("less_int", (Nothing, "<"))
-    , ("greater_int", (Nothing, ">"))
-    , ("less_equ_int", (Nothing, "<="))
-    , ("greater_equ_int",(Nothing, ">="))
-    , ("first", (Nothing, "first"))
-    , ("second", (Nothing, "second"))
-    , ("composition", (Nothing, ">>>"))
-    , ("triple_asterisk", (Nothing, "***"))
-    , ("left", (Nothing, "left"))
-    , ("right", (Nothing, "right"))
-    , ("triple_and", (Nothing, "&&&"))
-    , ("triple_plus", (Nothing, "+++"))
-    , ("triple_bar", (Nothing, "|||"))
+    , ("eq", (Just $ ReferentialType (AliasReference "Bool" []) [], "=="))
+    , ("eq", (Just $ ReferentialType (AliasReference "Char" []) [], "=="))
+    , ("eq", (Just $ ReferentialType (AliasReference "Int" []) [], "=="))
+    , ("less_int", (Just $ ReferentialType (AliasReference "Int" []) [], "<"))
+    , ("greater_int", (Just $ ReferentialType (AliasReference "Int" []) [], ">"))
+    , ("less_equ_int", (Just $ ReferentialType (AliasReference "Int" []) [], "<="))
+    , ("greater_equ_int",(Just $ ReferentialType (AliasReference "Int" []) [], ">="))
+    -- , ("is_left",(Nothing, "isLeft"))
+    -- , ("is_right",(Nothing, "isRight"))
+    , ("first", (Just $ idArrowType 0, "first"))
+    , ("second", (Just $ idArrowType 0, "second"))
+    , ("composition", (Just $ idArrowType 0, ">>>"))
+    , ("triple_asterisk", (Just $ idArrowType 0, "***"))
+    , ("left", (Just $ idArrowType 0, "left"))
+    , ("right", (Just $ idArrowType 0, "right"))
+    , ("triple_and", (Just $ idArrowType 0, "&&&"))
+    , ("triple_plus", (Just $ idArrowType 0, "+++"))
+    , ("triple_bar", (Just $ idArrowType 0, "|||"))
+    , ("flip", (Nothing, "flip"))
+    , ("flip_choice", (Nothing, "flipChoice"))
+    , ("reorder_to_front", (Nothing, "reorderToFront"))
+    , ("reorder_to_back", (Nothing, "reorderToBack"))
     ]
 
 createFunctionName :: Int -> String
@@ -333,8 +345,10 @@ getNewLableIndex = do
     modify $ \state -> state{stateLabelIndex = index + 1}
     return index
 
-getIndexFromNameAndClass :: Name -> Name -> ParserWithState Program Int
-getIndexFromNameAndClass className instanceName = gets $ fromMaybe 0 . elemIndex className . map instanceClassName . filter (elem instanceName . map fst . instanceMembers) . instances
+-- getIndexFromNameAndClass :: Name -> Name -> ParserWithState Program Int
+-- getIndexFromNameAndClass instanceName memberName = gets $ fromMaybe 0 . elemIndex instanceName . map instanceClassName . filter (elem memberName . map fst . instanceMembers) . instances
+-- instancesWithName <- lift $ gets $ filter (elem name . map fst . instanceMembers) . instancesWithName
+-- let possibleInstances = filter ((== instancedType) . instanceType . snd) $ zip [0..] instancesWithName
 
 -- gets $ find (\(Instance _ className' members) -> className == className' && instanceName elem $ map fst members) . instances
 

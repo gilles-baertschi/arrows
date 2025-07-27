@@ -1,18 +1,4 @@
-module Ast {-(
-    ParsingOffset,
-    Name (..),
-    Program (..),
-    TypeClass (..),
-    Instance (..),
-    Definition (..),
-    TypeAlias (..),
-    Value (..),
-    TypeWithValue (..),
-    Type (..),
-    ReferentialType (..),
-    resolveReference,
-    makeTypeReferential,
-)-} where
+module Ast where
 
 import Control.Monad.State
 import Data.List
@@ -52,17 +38,6 @@ data Value
     | Undefined ParsingOffset
     | UnaryArrowOperator UnaryArrowOperator ParsingOffset (Maybe ReferentialType) Value
     | BinaryArrowOperator BinaryArrowOperator ParsingOffset (Maybe ReferentialType) Value Value
-    -- | Arr ParsingOffset Value
-    -- | ArrowComposition ParsingOffset Value Value
-    -- | ArrowConstant ParsingOffset Value
-    -- | ArrowFirst ParsingOffset Value
-    -- | ArrowSecond ParsingOffset Value
-    -- | TripleAsterisks ParsingOffset Value Value
-    -- | TripleAnd ParsingOffset Value Value
-    -- | ArrowRight ParsingOffset Value
-    -- | ArrowLeft ParsingOffset Value
-    -- | TriplePlus ParsingOffset Value Value
-    -- | TripleBar ParsingOffset Value Value
     deriving (Eq, Ord, Show)
 
 data UnaryArrowOperator = Arr | ArrowConstant | ArrowFirst | ArrowSecond | ArrowRight | ArrowLeft
@@ -84,18 +59,6 @@ data TypeWithValue
     | TypeWithUndefined Type
     | TypeWithUnaryArrowOperator UnaryArrowOperator Type TypeWithValue
     | TypeWithBinaryArrowOperator BinaryArrowOperator Type TypeWithValue TypeWithValue
-
-    -- | TypeWithArr Type TypeWithValue
-    -- | TypeWithArrowComposition Type TypeWithValue TypeWithValue
-    -- | TypeWithArrowConstant Type TypeWithValue
-    -- | TypeWithArrowFirst Type TypeWithValue
-    -- | TypeWithArrowSecond Type TypeWithValue
-    -- | TypeWithTripleAsterisks Type TypeWithValue TypeWithValue
-    -- | TypeWithTripleAnd Type TypeWithValue TypeWithValue
-    -- | TypeWithArrowRight Type TypeWithValue
-    -- | TypeWithArrowLeft Type TypeWithValue
-    -- | TypeWithTriplePlus Type TypeWithValue TypeWithValue
-    -- | TypeWithTripleBar Type TypeWithValue TypeWithValue
     deriving (Eq, Ord, Show)
 
 data ReferentialType = ReferentialType {mainType :: Type, otherTypes :: [Type]}
@@ -118,11 +81,6 @@ data Type
     | AliasExtention Int [Type]
     | TypeReference Int
     | ThisClass
-    --    | Bool
-    --    | Float
-    --    | Int
-    --    | Char
-    --    | EmptyTuple
     deriving (Eq, Ord, Show)
 
 instance Eq Name where

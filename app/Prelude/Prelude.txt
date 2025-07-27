@@ -9,6 +9,7 @@ type Char = undefined
 
 type List a = (() | (a, List a)) 
 type String = List Char
+type State s a b = (a, s) -> (b, s)
 
 class Arrow y where
     id :: y a a
@@ -18,6 +19,9 @@ class Arrow y where
     second :: y a b -> y (c, a) (c, b)
     (***) :: (y a c, y b d) -> y (a, b) (c, d)
     (&&&) :: (y a b, y a c) -> y a (b, c)
+
+-- first[Id] first >>> second[Id] second >>> (>>>) >>> double >>> first[Id] (const[Id] double >>> arr) >>> (>>>) 
+-- (y a b, y a c) -> y a (b, c)
 
 class Arrow y => Choice y where
     left :: y a b -> y (a | c) (b | c)
@@ -29,7 +33,14 @@ class Arrow y => Apply y where
     app :: y (y a b, a) b
 
 class Eq a where
-    eq :: (a, a) -> Bool
+    (==) :: (a, a) -> Bool
+    (/=) :: (a, a) -> Bool
+
+class Eq a => Ord a where
+   (>) :: (a, a) -> Bool
+   (>=) :: (a, a) -> Bool
+   (<) :: (a, a) -> Bool
+   (<=) :: (a, a) -> Bool
 
 class Show a where
     show :: a -> String
@@ -70,17 +81,45 @@ instance Choice IO where
 instance Apply IO where
     app = undefined
 
+instance Arrow (State s) where
+    id = id[Id]
+    arr = first[Id] -- Id a b -> Id (a, s) (b, s)
+    (>>>) = (>>>)[Id] -- (Id (a, s) (b, s), Id (b, s) (c, s)) -> Id (a, s) (c, s)
+    -- Id (a, s) (b, s) -> Id ((a, c), s) ((b, c), s)
+    first = first[Id] >>> double >>> first[Id] (const[Id] reorderStateFirst) >>> (>>>)[Id] >>> double >>> second[Id] (const[Id] reorderStateFirst) >>> (>>>)[Id]
+    -- Id (a, s) (b, s) -> Id ((c, a), s) ((c, b), s)
+    second = first[Id] >>> double >>> first[Id] (const[Id] reorderStateSecond) >>> (>>>)[Id] >>> double >>> second[Id] (const[Id] reorderStateSecond) >>> (>>>)[Id]
+    -- Id ((a, s) -> (c, s), (b, s) -> (d, s)) (((a, b), s) ((c, d), s))
+    (***) = first[Id] first[State s] >>> second[Id] second[State s] >>> (>>>)[Id]
+    (&&&) = (***)[State s] >>> double >>> first[Id] (const[Id] double >>> arr[State s]) >>> (>>>)[State s] 
+
+reorderStateFirst :: ((a, b), s) -> ((a, s), b)
+reorderStateFirst = flip >>> reorderToFront >>> first[Id] flip
+
+reorderStateSecond :: ((a, b), s) -> ((s, a), b)
+reorderStateSecond = flip >>>[Id] reorderToFront
+
 instance Eq Bool where
-    eq = undefined
+    (==) = undefined
+    (/=) = (==) >>> not
 
 instance Eq Int where
-    eq = undefined
+    (==) = undefined
+    (/=) = (==) >>> not
 
 instance Eq Char where
-    eq = undefined
+    (==) = undefined
+    (/=) = (==) >>> not
 
 instance Eq () where
-    eq = undefined
+    (==) = const[Id] True
+    (/=) = const[Id] False
+
+instance Ord Int where
+   (>) = undefined
+   (>=) = undefined
+   (<) = undefined
+   (<=) = undefined
 
 instance Show Bool where
     show = boolToChoice >>>[Id] const[Id] "True" |||[Id] const[Id] "False"
@@ -88,8 +127,20 @@ instance Show Bool where
 instance Show Char where
     show = double >>>[Id] second[Id] (const[Id] (l ())) >>>[Id] r
 
--- id :: a -> a
--- id = undefined
+isZero :: Int -> Bool
+isZero = double >>> first[Id] (const[Id] 0) >>> (==)
+
+hasSignBit :: Int -> Bool
+hasSignBit = double >>> first[Id] (const[Id] 0) >>> (>)
+
+instance Show Int where
+    show = double >>> (first[Id] isZero) >>> choice >>> (double >>> first[Id] hasSignBit >>> choice >>> (mulpipleDigitsToChar >>>[Id] reverse) ||| (double >>> first[Id] (const[Id] (-1)) >>> mul >>> mulpipleDigitsToChar >>>[Id] reverse >>> double >>> first[Id] (const[Id] '-') >>> r)) ||| (const[Id] "0")
+
+mulpipleDigitsToChar :: Int -> String
+mulpipleDigitsToChar = double >>> first[Id] isZero >>> choice >>> (singleDigitToChar &&& (double >>> second[Id] (const[Id] 10) >>> div >>>[Id] mulpipleDigitsToChar) >>> r) ||| const[Id] (l ())
+
+singleDigitToChar :: Int -> Char
+singleDigitToChar = double >>>[Id] second[Id] (const[Id] 10) >>> mod >>> double >>>[Id] first[Id] (const[Id] 48) >>>[Id] add >>>[Id] chr
 
 readChar :: IO a Char
 readChar = undefined
@@ -106,8 +157,20 @@ flip = undefined
 flipChoice :: (a | b) -> (b | a)
 flipChoice = undefined
 
+reorderToFront :: (a, (b, c)) -> ((a, b), c)
+reorderToFront = undefined
+
+reorderToBack :: ((a, b), c) -> (a, (b, c))
+reorderToBack = undefined
+
 double :: a -> (a, a)
 double = undefined
+
+fromLeft :: (a | b) -> a
+fromLeft = undefined ||| id
+
+fromRight :: (a | b) -> b
+fromRight = undefined ||| id[Id]
 
 head :: List a -> a
 head = undefined ||| fst
@@ -139,6 +202,12 @@ and = undefined
 or :: (Bool, Bool) -> Bool
 or = undefined
 
+isLeft :: (a | b) -> Bool
+isLeft = const[Id] True ||| const[Id] False
+
+isRight :: (a | b) -> Bool
+isRight = const[Id] False ||| const[Id] True
+
 boolToChoice :: Bool -> (() | ())
 boolToChoice = double >>> second[Id] (const[Id] ()) >>> choice
 
@@ -157,8 +226,23 @@ chr = undefined
 ord :: Char -> Int
 ord = undefined
 
+put :: State s s ()
+put = fst >>> double >>> const[State s] ()
+
+get :: State s a s
+get = snd >>>[Id] double
+
 putChar :: IO Char ()
 putChar = undefined
 
 print :: IO String ()
 print = right (putChar *** print) >>> const ()
+
+reverse :: List a -> List a
+reverse = double >>> second[Id] (const[Id] (l ())) >>> moveAllOver >>>[Id] snd
+
+moveAllOver :: (List a, List a) -> (List a, List a)
+moveAllOver = id[Id] >>> double >>> first[Id] (fst >>>[Id] isRight) >>> choice >>> (id[Id] ||| (moveOver >>>[Id] moveAllOver))
+
+moveOver :: (List a, List a) -> (List a, List a)
+moveOver = first[Id] (fromRight >>>[Id] flip) >>> reorderToBack >>>[Id] second[Id] r

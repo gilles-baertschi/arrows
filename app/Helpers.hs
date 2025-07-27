@@ -9,14 +9,10 @@ import Parser.Primitives
 getAlias :: Name -> ParserWithState Program TypeAlias
 getAlias name = gets $ head . filter ((name ==) . aliasName) . aliases
 
--- getDefinition :: String -> ParserWithState Program Definition
--- getDefinition name = gets $ head . filter ((name ==) . definitionName) . definitions
-
 getTypeFromName :: Name -> ParserWithState Program ReferentialType
 getTypeFromName name = do
     fromDefinitions <- gets $ map definitionType . filter ((name ==) . definitionName) . definitions
     fromClasses <- gets $ map snd . filter ((name ==) . fst) . typeClassMembers <=< typeClasses
-    -- fromInstances <- gets $ filter ((name ==) . fst) . instanceMembers <=< instances
     return $ head $ fromDefinitions ++ fromClasses
 
 getTypesFromName :: Name -> ParserWithState Program (Either ReferentialType [ReferentialType])
@@ -28,7 +24,6 @@ getTypesFromName name = do
             instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
             definitionsForName <- concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
             return $ map definitionType definitionsForName
-        -- map (\(_, referentialType, _) -> referentialType) . concatMap (filter (\(memberName, _, _) -> name == memberName)) <$> (gets (filter ((== className) . instanceClassName) . instances) >>= mapM getReferentialTypeMembers)
         Nothing -> return []
     return $ maybe (Right fromInstances) Left fromDefinition
 
@@ -40,23 +35,16 @@ getDefinitionsFromName name = do
         Just (TypeClass className _ _) -> do
             instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
             concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
-        -- map (\(_, referentialType, _) -> referentialType) . concatMap (filter (\(memberName, _, _) -> name == memberName)) <$> (gets (filter ((== className) . instanceClassName) . instances) >>= mapM getReferentialTypeMembers)
         Nothing -> return []
     return $ maybe (Right fromInstances) Left fromDefinition
 
--- fromInstances <- case maybeClass of
---    Just (TypeClass className members) -> do
---         allDefinitionsFromInstances <- gets $ concatMap (\(Instance instanceType' _ members) -> map (instanceType', undefined) members) . filter ((== className) . instanceClassName) . instances
---         return []
---     Nothing -> return []
--- mapM_
---     ( \(insertedType, (name, value)) -> do
---         referentialType <- getTypeFromName name
---         assertReferentialType (insertType referentialType insertedType 0) value
---     )
-
 getInstances :: Name -> ParserWithState Program [Instance]
 getInstances name = gets $ filter ((name ==) . instanceClassName) . instances
+
+getIndeciesFromNameAndInstancType :: Name -> ReferentialType -> ParserWithState Program [Int]
+getIndeciesFromNameAndInstancType name referentialType = do 
+    instancesWithName <- gets $ filter (elem name . map fst . instanceMembers) . instances
+    return $ map fst $ filter ((== referentialType) . instanceType . snd) $ zip [0..] instancesWithName
 
 addTypeVariabel :: ParserWithDoubleState [Type] Program Type
 addTypeVariabel = do
@@ -78,17 +66,6 @@ getOffsetFromValue value = case value of
     (UnaryArrowOperator _ offset _ _) -> offset
     (BinaryArrowOperator _ offset _ _ _) -> offset
     (Undefined offset) -> offset
-
--- (ArrowComposition offset _ _) -> offset
--- (ArrowConstant offset _) -> offset
--- (ArrowFirst offset _) -> offset
--- (ArrowSecond offset _) -> offset
--- (TripleAsterisks offset _ _) -> offset
--- (TripleAnd offset _ _) -> offset
--- (ArrowRight offset _) -> offset
--- (ArrowLeft offset _) -> offset
--- (TriplePlus offset _ _) -> offset
--- (TripleBar offset _ _) -> offset
 
 increaseReferences :: ReferentialType -> Int -> ReferentialType
 increaseReferences (ReferentialType t references) index = ReferentialType (increase t) (map increase references)
@@ -137,11 +114,6 @@ displayReferentialType (ReferentialType t references) = evalState (display t) []
         xString <- display x
         yString <- display y
         return $ "(" ++ xString ++ " | " ++ yString ++ ")"
-    -- display Bool = "Bool"
-    -- display Float = "Float"
-    -- display Int = "Int"
-    -- display Char = "Char"
-    -- display EmptyTuple = "()"
     display (ForAllInstances _ classNames) = return $ "for all {" ++ intercalate ", " (map nameString classNames) ++ "}"
     display (AnyType _ classNames) = return $ "any {" ++ intercalate ", " (map nameString classNames) ++ "}"
     display (AliasReference name arguments) = case name of
@@ -209,39 +181,3 @@ idArrowType offset = ReferentialType (AliasReference (Name offset "Id") []) []
 isIdArrow :: ReferentialType -> Bool
 isIdArrow (ReferentialType (AliasReference (Name _ "Id") []) []) = True 
 isIdArrow _ = False
-
--- getTypeFromTypeWithValue (TypeWithArr t _) = t
--- getTypeFromTypeWithValue (TypeWithArrowComposition t _ _) = t
--- getTypeFromTypeWithValue (TypeWithArrowConstant t _) = t
--- getTypeFromTypeWithValue (TypeWithArrowFirst t _) = t
--- getTypeFromTypeWithValue (TypeWithArrowSecond t _) = t
--- getTypeFromTypeWithValue (TypeWithTripleAsterisks t _ _) = t
--- getTypeFromTypeWithValue (TypeWithTripleAnd t _ _) = t
--- getTypeFromTypeWithValue (TypeWithArrowRight t _) = t
--- getTypeFromTypeWithValue (TypeWithArrowLeft t _) = t
--- getTypeFromTypeWithValue (TypeWithTriplePlus t _ _) = t
--- getTypeFromTypeWithValue (TypeWithTripleBar t _ _) = t
-
--- addTypeToValue t (ArrowComposition offset x y) = TypeWithArrowComposition t offset x y
--- addTypeToValue t (ArrowConstant offset x) = TypeWithArrowConstant t offset x
--- addTypeToValue t (ArrowFirst offset x) = TypeWithArrowFirst t offset x
--- addTypeToValue t (ArrowSecond offset x) = TypeWithArrowSecond t offset x
--- addTypeToValue t (TripleAsterisks offset x y) = TypeWithTripleAsterisks t offset x y
--- addTypeToValue t (TripleAnd offset x y) = TypeWithTripleAnd t offset x y
--- addTypeToValue t (ArrowRight offset x) = TypeWithArrowRight t offset x
--- addTypeToValue t (ArrowLeft offset x) = TypeWithArrowLeft t offset x
--- addTypeToValue t (TriplePlus offset x y) = TypeWithTriplePlus offset x y
--- addTypeToValue t (TripleBar offset x y) = TypeWithTripleBar t offset x y
---
--- ProductLiteral ParsingOffset Value Value
--- \| SumLiteral ParsingOffset Bool Value
--- \| ArrowComposition ParsingOffset Value Value
--- \| ArrowConstant ParsingOffset Value
--- \| ArrowFirst ParsingOffset Value
--- \| ArrowSecond ParsingOffset Value
--- \| TripleAsterisks ParsingOffset Value Value
--- \| TripleAnd ParsingOffset Value Value
--- \| ArrowRight ParsingOffset Value
--- \| ArrowLeft ParsingOffset Value
--- \| TriplePlus ParsingOffset Value Value
--- \| TripleBar ParsingOffset Value Value

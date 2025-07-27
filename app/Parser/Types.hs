@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- module Parser.Types (typeP, aliasP, classP, typeConstraintsP, typeWithExistingConstraintsP, Constraint (..), typeTailP, toReferentialType, constrainedTypeP) where
 module Parser.Types where
 
 import Ast
@@ -30,7 +29,7 @@ classP = nonIndented (L.indentBlock newLineP p)
         className <- upperCaseNameP
         localName <- lowerCaseNameP
         unless (maybe True (all ((localName ==) . constrainedLocalName)) maybeConstraints) $ fail ("only " ++ nameString localName ++ " allowed in constraints")
-        let parents = constrainedLocalName <$> fromMaybe [] maybeConstraints
+        let parents = maybe [] (concatMap constrainedClassNames) maybeConstraints
         let constraints = mergeConstraints $ Constraint localName [className] : fromMaybe [] maybeConstraints
         _ <- symbol "where"
         return $ L.IndentSome Nothing (return . TypeClass className parents) (member constraints)
@@ -49,9 +48,6 @@ aliasP = nonIndented p
                 let termianlP = symbol "undefined" $> TypeAlias name argumentCount Nothing
                 let normalP = TypeAlias name argumentCount . Just . toReferentialType <$> runStateT (typeTailP True) (map (`Constraint` []) arguments)
                 (termianlP <|> normalP) <* newLineP
-            -- result <- symbol "undefined" $> TerminalTypeAlias name argumentCount <|> TypeAlias name argumentCount . toReferentialType <$> runStateT (typeTailP True) (map (`Constraint` []) arguments)
-            -- _ <- newLineP
-            -- return result
             else fail "several definitions for the same type variable"
 
 typeP :: Parser ReferentialType
@@ -64,13 +60,9 @@ toReferentialType :: (Type, [Constraint]) -> ReferentialType
 toReferentialType (finalType, constraints) = ReferentialType finalType $ zipWith (\index (Constraint _ classNames) -> ForAllInstances index classNames) [0..] constraints
 
 typeConstraintsP :: Parser [Constraint]
-typeConstraintsP = (((: []) <$> singleConstraintP) <|> (mergeConstraints <$> parens (sepBy singleConstraintP (symbol ",")))) <* symbol "=>"
+typeConstraintsP = (try ((: []) <$> singleConstraintP) <|> (mergeConstraints <$> parens (sepBy singleConstraintP (symbol ",")))) <* symbol "=>"
   where
     singleConstraintP = flip Constraint . (: []) <$> upperCaseNameP <*> lowerCaseNameP
-
--- let allLocalNames = nub $ map constrainedClassNames bindings
--- let bindingsWithLocalName name = map fst $ filter ((name ==) . snd) bindings
--- return $ map (\name -> Constraint name (bindingsWithLocalName name)) allLocalNames
 
 mergeConstraints :: [Constraint] -> [Constraint]
 mergeConstraints constraints = map (\name -> Constraint name (constraintsWithLocalName name)) allLocalNames
