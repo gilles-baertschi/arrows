@@ -3,6 +3,8 @@ module Ast where
 import Control.Monad.State
 import Data.List
 import Data.String
+import Control.Monad
+import Text.Megaparsec hiding (State)
 
 data Program = Program {typeClasses :: [TypeClass], instances :: [Instance], definitions :: [Definition], aliases :: [TypeAlias]}
     deriving (Show, Eq, Ord)
@@ -35,7 +37,7 @@ data Value
     | EmptyTupleLiteral ParsingOffset
     | DefinedValue Name
     | DefinedValueFromInstance Name (Either Int ReferentialType)
-    | Undefined ParsingOffset
+    | Undefined ParsingOffset SourcePos
     | UnaryArrowOperator UnaryArrowOperator ParsingOffset (Maybe ReferentialType) Value
     | BinaryArrowOperator BinaryArrowOperator ParsingOffset (Maybe ReferentialType) Value Value
     deriving (Eq, Ord, Show)
@@ -56,7 +58,7 @@ data TypeWithValue
     | TypeWithEmptyTupleLiteral Type
     | TypeWithDefinedValue Type Name
     | TypeWithDefinedValueFromInstance Type Name Int
-    | TypeWithUndefined Type
+    | TypeWithUndefined Type SourcePos
     | TypeWithUnaryArrowOperator UnaryArrowOperator Type TypeWithValue
     | TypeWithBinaryArrowOperator BinaryArrowOperator Type TypeWithValue TypeWithValue
     deriving (Eq, Ord, Show)
@@ -144,5 +146,7 @@ instance Eq ReferentialType where
             if nameX == nameY && length argumentsX == length argumentsY
                 then and <$> zipWithM eq argumentsX argumentsY
                 else return False
-        eq ThisClass ThisClass = return True
+        -- eq ThisClass ThisClass = return True
+        -- eq (AliasReference nameX argumentsX) y = do 
+          
         eq x y = return $ x == y

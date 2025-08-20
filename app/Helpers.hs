@@ -5,6 +5,7 @@ import Control.Monad
 import Control.Monad.State
 import Data.List
 import Parser.Primitives
+import Data.Maybe
 
 getAlias :: Name -> ParserWithState Program TypeAlias
 getAlias name = gets $ head . filter ((name ==) . aliasName) . aliases
@@ -65,7 +66,7 @@ getOffsetFromValue value = case value of
     (DefinedValueFromInstance (Name offset _) _) -> offset
     (UnaryArrowOperator _ offset _ _) -> offset
     (BinaryArrowOperator _ offset _ _ _) -> offset
-    (Undefined offset) -> offset
+    (Undefined offset _) -> offset
 
 increaseReferences :: ReferentialType -> Int -> ReferentialType
 increaseReferences (ReferentialType t references) index = ReferentialType (increase t) (map increase references)
@@ -79,15 +80,28 @@ increaseReferences (ReferentialType t references) index = ReferentialType (incre
     increase (ForAllInstances i arguments) = ForAllInstances (i + index) arguments
     increase x = x
 
-toAnyTypeReferences :: ReferentialType -> ReferentialType
-toAnyTypeReferences (ReferentialType t references) = ReferentialType (toAnyType t) (map toAnyType references)
+toAnyTypeReferences :: ReferentialType -> Maybe ReferentialType -> ReferentialType
+toAnyTypeReferences (ReferentialType t references) thisClass = ReferentialType (toAnyType t) (map toAnyType (references ++ maybe [] otherTypes increasedThisClass))
   where
     toAnyType (Product x y) = Product (toAnyType x) (toAnyType y)
     toAnyType (Sum x y) = Sum (toAnyType x) (toAnyType y)
     toAnyType (AliasReference name arguments) = AliasReference name $ map toAnyType arguments
     toAnyType (AliasExtention offset arguments) = AliasExtention offset $ map toAnyType arguments
     toAnyType (ForAllInstances index classesWithNames) = AnyType index classesWithNames
+    toAnyType ThisClass = maybe ThisClass (toAnyType . mainType) increasedThisClass
     toAnyType x = x
+    increasedThisClass = flip increaseReferences (length references) <$> thisClass
+
+specifieClass :: ReferentialType -> ReferentialType -> ReferentialType
+specifieClass (ReferentialType t references) thisClass = ReferentialType (specifie t) (map specifie (references ++ otherTypes increasedThisClass))
+  where
+    specifie (Product x y) = Product (specifie x) (specifie y)
+    specifie (Sum x y) = Sum (specifie x) (specifie y)
+    specifie (AliasReference name arguments) = AliasReference name $ map specifie arguments
+    specifie (AliasExtention offset arguments) = AliasExtention offset $ map specifie arguments
+    specifie ThisClass = mainType $ increasedThisClass
+    specifie x = x
+    increasedThisClass = increaseReferences thisClass (length references)
 
 insertType :: ReferentialType -> ReferentialType -> Int -> ReferentialType
 insertType (ReferentialType outerMainType outerOtherTypes) nonIncreasedInsertedTypes index = ReferentialType outerMainType $ replace index insertedMainType outerOtherTypes ++ insertedOtherTypes
@@ -143,7 +157,7 @@ getDefinitionsFromInstance (Instance insertedType className members) = do
     (TypeClass _ _ classMembers) <- gets $ head . filter ((className ==) . typeClassName) . typeClasses
     mapM
         ( \((name, referentialType), value) -> do
-            return $ Definition name (insertType referentialType insertedType 0) value
+            return $ Definition name (specifieClass referentialType insertedType) value
         )
         $ zip (sortOn fst classMembers) (map snd $ sortOn fst members)
 
@@ -155,7 +169,7 @@ addTypeToValue t (CharLiteral _ x) = TypeWithCharLiteral t x
 addTypeToValue t (EmptyTupleLiteral _) = TypeWithEmptyTupleLiteral t
 addTypeToValue t (DefinedValue name) = TypeWithDefinedValue t name
 addTypeToValue t (DefinedValueFromInstance name (Left index)) = TypeWithDefinedValueFromInstance t name index
-addTypeToValue t (Undefined _) = TypeWithUndefined t
+addTypeToValue t (Undefined _ sourcePos) = TypeWithUndefined t sourcePos
 addTypeToValue t@(Product xType yType) (ProductLiteral _ xValue yValue) = TypeWithProductLiteral t (addTypeToValue xType xValue) (addTypeToValue yType yValue)
 addTypeToValue t@(Sum xType yType) (SumLiteral _ boolChoice value) = TypeWithSumLiteral t boolChoice $ if boolChoice then addTypeToValue yType value else addTypeToValue xType value
 addTypeToValue _ _ = undefined
@@ -171,7 +185,7 @@ getTypeFromTypeWithValue typeWithValue = case typeWithValue of
     (TypeWithEmptyTupleLiteral t) -> t
     (TypeWithDefinedValue t _) -> t
     (TypeWithDefinedValueFromInstance t _ _) -> t
-    (TypeWithUndefined t) -> t
+    (TypeWithUndefined t _) -> t
     (TypeWithUnaryArrowOperator _ t _) -> t
     (TypeWithBinaryArrowOperator _ t _ _) -> t
 

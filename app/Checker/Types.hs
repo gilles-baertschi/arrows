@@ -9,6 +9,7 @@ import Parser.Primitives
 import Text.Megaparsec hiding (State)
 import Data.Either
 import Data.Bifunctor
+import Data.List
 
 checkTypeSafety :: ParserWithState Program ()
 checkTypeSafety = do
@@ -27,7 +28,7 @@ assertReferentialType :: ReferentialType -> Value -> ParserWithState Program [(T
 assertReferentialType (ReferentialType frame references) content = evalStateT (assertType frame content) references
 
 assertType :: Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
-assertType frame (Undefined _) = returnTypeWithValueAndState $ TypeWithUndefined frame
+assertType frame (Undefined _ sourcePos) = returnTypeWithValueAndState $ TypeWithUndefined frame sourcePos
 assertType (TypeReference index) content = do
     when (index < 0) $ fail $ "tried resolving negatide reference: " ++ show content
     frame <- gets (!! index)
@@ -39,7 +40,7 @@ assertType frame content@(DefinedValue name) = do
     eitherReferentialTypes <- lift $ getTypesFromName name
     case eitherReferentialTypes of
         (Left fromDefinition) -> do
-            inferiorType <- addReferentialType $ toAnyTypeReferences fromDefinition
+            inferiorType <- addReferentialType $ toAnyTypeReferences fromDefinition Nothing
             typeGreaterThanWithOffset (nameOffset name) frame inferiorType
             returnTypeWithValueAndState $ TypeWithDefinedValue frame name
         (Right fromInstances) -> do
@@ -49,7 +50,8 @@ assertType frame content@(DefinedValue name) = do
                         ( \(index, fromInstance) -> do
                              backup <- get
                              ( do
-                                 inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance
+                                 thisType <- lift $ gets $ instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances
+                                 inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance $ Just thisType
                                  typeGreaterThanWithOffset (nameOffset name) frame inferiorType
                                  state <- get
                                  put backup
@@ -62,7 +64,8 @@ assertType frame content@(DefinedValue name) = do
                 xs -> return xs
 assertType frame content@(DefinedValueFromInstance name (Left index)) = do
     fromInstance <- lift $ (!! index) . fromRight undefined <$> getTypesFromName name
-    inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance
+    thisType <- lift $ gets $ instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances
+    inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance $ Just thisType
     typeGreaterThanWithOffset (nameOffset name) frame inferiorType
     returnTypeWithValueAndState $ TypeWithDefinedValueFromInstance frame name index
 assertType frame content@(DefinedValueFromInstance name (Right instancedType)) = do
@@ -80,10 +83,10 @@ assertType frame content@(UnaryArrowOperator ArrowConstant offset referentialTyp
     else assertType frame $ UnaryArrowOperator Arr offset Nothing $ UnaryArrowOperator ArrowConstant offset (Just $ idArrowType offset) innerValue
 assertType frame content@(UnaryArrowOperator unaryOperator offset referentialType innerArrow) =  if maybe False isIdArrow referentialType
     then assertAtomicArrow frame content offset "Id" 
-    else assertArrowOperator frame content offset (DefinedValue $ Name offset $ show unaryOperator) innerArrow
+    else assertArrowOperator frame content offset (show unaryOperator) referentialType innerArrow
 assertType frame content@(BinaryArrowOperator binaryOperator offset referentialType firstArrow secondArrow) = if maybe False isIdArrow referentialType
     then assertAtomicArrow frame content offset "Id" 
-    else assertArrowOperator frame content offset (DefinedValue $ Name offset $ show binaryOperator) (ProductLiteral offset firstArrow secondArrow)
+    else assertArrowOperator frame content offset (show binaryOperator) referentialType (ProductLiteral offset firstArrow secondArrow)
 assertType frame@(AliasReference name arguments) content = do
     alias <- lift $ getAlias name
     case alias of
@@ -122,9 +125,10 @@ assertType (AliasExtention index arguments) content = do
     (AliasReference name arguments') <- gets (!! index)
     assertType (AliasReference name (arguments' ++ arguments)) content
 assertType (AnyType index []) content = do
-    newType <- getTypeFromValue content
-    modify $ replace index newType
-    returnTypeWithValueAndState $ addTypeToValue newType content
+    newTypes <- getTypeFromValue content
+    concat <$> mapM (\newType -> do 
+        modify $ replace index newType
+        returnTypeWithValueAndState $ addTypeToValue newType content) newTypes
 assertType (AnyType _ _) _ = undefined
 assertType (ForAllInstances _ instanceNames) content = fail $ show instanceNames ++ "\n" ++ show content
 assertType ThisClass _ = undefined
@@ -268,10 +272,11 @@ typeGreaterThan (AliasExtention index arguments) inferior = do
     core <- gets (!! index)
     case core of
         (AliasReference name coreArguments) -> typeGreaterThan (AliasReference name (coreArguments ++ arguments)) inferior
-        -- (ForAllInstances []) -> return ()
-        -- (ForAllInstances [_]) -> return ()
-        -- ThisClass -> return ()
-        x -> fail $ "expected alias reference " ++ show x
+        (ForAllInstances _ []) -> undefined
+        (ForAllInstances _ _) -> undefined
+        ThisClass -> undefined
+        (AnyType _ _) -> undefined
+        x -> undefined -- fail $ "expected alias reference " ++ show x
 typeGreaterThan superior (AliasExtention index arguments) = do
     core <- gets (!! index)
     case core of
@@ -347,48 +352,65 @@ addReferentialType referentialType = do
     gets (++ newReferences) >>= put
     return result
 
-getTypeFromValue :: Value -> ParserWithDoubleState [Type] Program Type
-getTypeFromValue (ProductLiteral _ x y) = Product <$> getTypeFromValue x <*> getTypeFromValue y
+getTypeFromValue :: Value -> ParserWithDoubleState [Type] Program [Type]
+getTypeFromValue (ProductLiteral _ x y) = (liftM2 Product <$> getTypeFromValue x <*> getTypeFromValue y)
 getTypeFromValue (SumLiteral _ boolChoice x) = do
     otherType <- addTypeVariabel
-    xType <- getTypeFromValue x
-    return $ if boolChoice then Sum otherType xType else Sum xType otherType
-getTypeFromValue (BoolLiteral offset _) = return $ AliasReference (Name offset "Bool") []
-getTypeFromValue (IntLiteral offset _) = return $ AliasReference (Name offset "Int") []
-getTypeFromValue (FloatLiteral offset _) = return $ AliasReference (Name offset "Float") []
-getTypeFromValue (CharLiteral offset _) = return $ AliasReference (Name offset "Char") []
-getTypeFromValue (EmptyTupleLiteral offset) = return $ AliasReference (Name offset "()") []
+    xTypes <- getTypeFromValue x
+    return $ if boolChoice then map (Sum otherType) xTypes else map ((flip Sum) otherType) xTypes
+getTypeFromValue (BoolLiteral offset _) = return [AliasReference (Name offset "Bool") []]
+getTypeFromValue (IntLiteral offset _) = return [AliasReference (Name offset "Int") []]
+getTypeFromValue (FloatLiteral offset _) = return [AliasReference (Name offset "Float") []]
+getTypeFromValue (CharLiteral offset _) = return [AliasReference (Name offset "Char") []]
+getTypeFromValue (EmptyTupleLiteral offset) = return [AliasReference (Name offset "()") []]
 getTypeFromValue (DefinedValue name) = do
-    referentialType <- lift $ getTypeFromName name
-    addReferentialType $ toAnyTypeReferences referentialType
+    -- referentialType <- lift $ getTypeFromName name
+    -- maybeClass <- lift $ gets $ find ((name `elem`) . map fst . typeClassMembers) . typeClasses
+    -- addReferentialType $ toAnyTypeReferences referentialType $ flip ReferentialType [] . ForAllInstances 0 . (\x -> typeClassName x : typeClassParents x) <$> maybeClass
+    eitherType <- lift $ getTypesFromName name 
+    case eitherType of
+        Left x -> (:[]) <$> (addReferentialType $ toAnyTypeReferences x Nothing)
+        Right xs -> mapM (\x -> addReferentialType $ toAnyTypeReferences x Nothing) xs
 getTypeFromValue (DefinedValueFromInstance name (Left index)) = do
     referentialType <- either id (!! index) <$> lift (getTypesFromName name)
-    addReferentialType $ toAnyTypeReferences referentialType
-getTypeFromValue (UnaryArrowOperator Arr offset referentialType inner) = do
-    let isId = maybe False isIdArrow referentialType
-    innerType <- getTypeFromValue inner
-    inputType <- addTypeVariabel
-    outputType <- addTypeVariabel
-    let innerArrow = AliasReference (Name offset "Id") [inputType, outputType]
-    typeGreaterThanWithOffset offset innerArrow innerType 
-    index <- gets length
-    unless isId $ modify (++ [AnyType index ["Arrow"]])
-    return $ if isId then AliasReference (Name offset "Id") [inputType, outputType] else AliasExtention index [inputType, outputType]
-getTypeFromValue (BinaryArrowOperator ArrowComposition offset referentialType firstInner secondInner) = do
-    let isId = maybe False isIdArrow referentialType
-    firstInnerType <- getTypeFromValue firstInner
-    secondInnerType <- getTypeFromValue secondInner
-    inputType <- addTypeVariabel
-    outputType <- addTypeVariabel
-    sharedType <- addTypeVariabel
-    index <- gets length
-    modify (++ [AnyType index ["Arrow"]])
-    let firstInnerArrow = AliasExtention index [inputType, sharedType]
-    let secondInnerArrow = AliasExtention index [sharedType, outputType]
-    typeGreaterThanWithOffset offset firstInnerArrow firstInnerType
-    typeGreaterThanWithOffset offset secondInnerArrow secondInnerType
-    return $ AliasExtention index [inputType, outputType]
-getTypeFromValue x = fail $ show x
+    thisType <- lift $ gets $ instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances
+    (:[]) <$> (addReferentialType $ toAnyTypeReferences referentialType $ Just thisType)
+getTypeFromValue (DefinedValueFromInstance name (Right instancedType)) = do
+    possibleIndecies <- lift $ getIndeciesFromNameAndInstancType name instancedType
+    case possibleIndecies of
+        [] -> do 
+            setOffset $ nameOffset name
+            fail $ "no instance of the type " ++ displayReferentialType instancedType
+        [index] -> getTypeFromValue $ DefinedValueFromInstance name $ Left index
+        _ -> do 
+            setOffset $ nameOffset name
+            fail $ "multiple instances of the type " ++ displayReferentialType instancedType
+
+-- getTypeFromValue (UnaryArrowOperator Arr offset referentialType inner) = do
+--     let isId = maybe False isIdArrow referentialType
+--     innerType <- getTypeFromValue inner
+--     inputType <- addTypeVariabel
+--     outputType <- addTypeVariabel
+--     let innerArrow = AliasReference (Name offset "Id") [inputType, outputType]
+--     typeGreaterThanWithOffset offset innerArrow innerType 
+--     index <- gets length
+--     unless isId $ modify (++ [AnyType index ["Arrow"]])
+--     return $ if isId then [AliasReference (Name offset "Id") [inputType, outputType]] else [AliasExtention index [inputType, outputType]]
+-- getTypeFromValue (BinaryArrowOperator ArrowComposition offset referentialType firstInner secondInner) = do
+--     let isId = maybe False isIdArrow referentialType
+--     firstInnerType <- getTypeFromValue firstInner
+--     secondInnerType <- getTypeFromValue secondInner
+--     inputType <- addTypeVariabel
+--     outputType <- addTypeVariabel
+--     sharedType <- addTypeVariabel
+--     index <- gets length
+--     modify (++ [AnyType index ["Arrow"]])
+--     let firstInnerArrow = AliasExtention index [inputType, sharedType]
+--     let secondInnerArrow = AliasExtention index [sharedType, outputType]
+--     typeGreaterThanWithOffset offset firstInnerArrow firstInnerType
+--     typeGreaterThanWithOffset offset secondInnerArrow secondInnerType
+--     return [AliasExtention index [inputType, outputType]]
+getTypeFromValue x = fail $ "not implemented getting a type from this value " ++ show x
 
 applyOperator :: ParsingOffset -> Value -> Value -> Value
 applyOperator offset operator inner = idArrow -- arr f = double >>> first (const f >>> arr) >>> app
@@ -399,20 +421,35 @@ applyOperator offset operator inner = idArrow -- arr f = double >>> first (const
     app = DefinedValueFromInstance (Name offset "app") (Right $ idArrowType offset)
     double = DefinedValue $ Name offset "double"
 
-assertArrowOperator :: Type -> Value -> ParsingOffset -> Value -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
-assertArrowOperator frame content offset operator inner = do
+assertArrowOperator :: Type -> Value -> ParsingOffset -> String -> Maybe ReferentialType -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
+assertArrowOperator frame content offset operatorString referentialType inner = do
     backup <- get
-    idPossibilities <- assertAtomicArrow frame content offset "Id" <|> return []
-    put backup
-    ioPossibilities <- assertAtomicArrow frame content offset "IO" <|> return []
-    put backup
-    specialPossibilities <- assertType frame (applyOperator offset operator inner) <|> return []
-    put backup
-    let possibilities = idPossibilities ++ ioPossibilities ++ specialPossibilities
+    possibleTypes <- lift $ gets $ filter (\t -> maybe True (== t) referentialType) . map instanceType . filter ((== "Arrow") . instanceClassName) . instances
+    -- test <- lift $ gets $ map instanceType . filter ((== "Arrow") . instanceClassName) . instances
+    -- fail $ show referentialType
+    -- when (null possibleTypes) undefined
+    possibilities <- concat <$> mapM (\possibleType -> put backup >> f possibleType) possibleTypes
     case possibilities of
         [] -> failTypeInference frame content
         xs -> return xs
+  where
+    f possibleType
+      | possibleType == idArrowType offset = assertAtomicArrow frame content offset "Id" <|> return []
+      | possibleType == (ReferentialType (AliasReference "IO" []) []) = assertAtomicArrow frame content offset "IO" <|> return []
+      | otherwise = assertType frame (applyOperator offset operator inner) <|> return [] 
+        where operator = DefinedValueFromInstance (Name offset operatorString) $ Right possibleType
 
+    -- backup <- get
+    -- idPossibilities <- assertAtomicArrow frame content offset "Id" <|> return []
+    -- put backup
+    -- ioPossibilities <- assertAtomicArrow frame content offset "IO" <|> return []
+    -- put backup
+    -- possibleArrowInstances <- lift $ gets $ filter ((\t -> t /= idArrowType offset && t /= ReferentialType (AliasReference "IO" []) []) . instanceType) . filter ((== "Arrow") . instanceClassName) . instances
+    -- let operators = map (DefinedValueFromInstance (Name offset operatorString) . Right . instanceType) possibleArrowInstances
+    -- specialPossibilities <- concat <$> mapM (\operator -> assertType frame (applyOperator offset operator inner) <|> return []) operators
+    -- put backup
+    -- let possibilities = idPossibilities ++ ioPossibilities ++ specialPossibilities
+    
 assertAtomicArrow :: Type -> Value -> ParsingOffset -> String -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
 assertAtomicArrow frame content offset atomicType = do
     inputType <- addTypeVariabel

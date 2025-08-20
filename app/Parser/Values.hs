@@ -68,7 +68,7 @@ charP :: Parser Value
 charP = CharLiteral <$> getOffset <*> charLiteralP
 
 compilerDefinedP :: Parser Value
-compilerDefinedP = Undefined <$> getOffset <* symbol "undefined"
+compilerDefinedP = Undefined <$> getOffset <*> getSourcePos <* symbol "undefined"
 
 definedValueP :: Parser Value
 definedValueP = do 

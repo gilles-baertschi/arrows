@@ -12,6 +12,8 @@ import Data.List
 import Data.Maybe
 import Helpers
 import Parser.Primitives
+import Control.Monad
+import Text.Megaparsec
 
 data TranslationState = TranslationState {stateReferences :: [Type], stateText :: String, stateDefinitions :: [TranslatedDefinition], stateDataSection :: [DataSection], stateLabelIndex :: Int}
 
@@ -37,7 +39,7 @@ translate =
         (TranslationState _ _ translatedDefinitions dataSection _) <-
             execStateT
                 ( do
-                    translateDefinition "main" Nothing Nothing
+                    translateDefinition "main" Nothing (ReferentialType (AliasReference "IO" [AliasReference "()" [], AliasReference "()" []]) [])
                 )
                 (TranslationState [] "" compilerDefinitionsAsTranslated [] 0)
         let dataSectionText = "section .data\n" ++ intercalate "\n" (zipWith dataSectionToText [0 ..] dataSection) ++ "\n"
@@ -50,27 +52,53 @@ translate =
                     $ filter (isJust . translatedText . snd) (zip [0 ..] translatedDefinitions)
         return $ dataSectionText ++ start ++ body ++ preludeAssembly
 
-translateDefinition :: Name -> Maybe Int -> Maybe ReferentialType -> ParserWithDoubleState TranslationState Program ReturnType
-translateDefinition name maybeIndex maybeReferentialType = do
+translateDefinition :: Name -> Maybe Int -> ReferentialType -> ParserWithDoubleState TranslationState Program ReturnType
+translateDefinition name maybeIndex contextType = do
     eitherDefinitions <- lift $ getDefinitionsFromName name
     let definition = either id (!! fromMaybe 0 maybeIndex) eitherDefinitions
-    let referentialType = fromMaybe (definitionType definition) maybeReferentialType
-    -- [(mainTypeWithValue, mainTypeReferences)] <- lift $ assertReferentialType referentialType $ definitionValue definition
-    x <- lift $ assertReferentialType referentialType $ definitionValue definition
-    case x of
-        [(mainTypeWithValue, mainTypeReferences)] -> do
-            function <- translateInContext
-                ( do
-                    modify $ \state ->
-                        state
-                            { stateReferences = mainTypeReferences
-                            , stateDefinitions = stateDefinitions state ++ [TranslatedDefinition (Just name) maybeIndex (Just referentialType) Nothing]
-                            }
-                    translateValue mainTypeWithValue >>= callReturn "[rbp+16]"
-                )
-            return $ ReturnFunctionName function
-        _ -> fail $ show maybeReferentialType
-    
+    maybeThisType <- maybe (return Nothing) (\index -> lift $ gets $ Just . instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances) maybeIndex
+    referentialType <- lift $ generalizeContext contextType (definitionType definition) maybeThisType
+    -- let referentialType = fromMaybe (definitionType definition) maybeReferentialType
+    (mainTypeWithValue, mainTypeReferences):_ <- lift $ assertReferentialType referentialType $ definitionValue definition
+    -- x <- lift $ assertReferentialType referentialType $ definitionValue definition
+    --case x of
+    -- [(mainTypeWithValue, mainTypeReferences)] -> do
+    function <- translateInContext
+        ( do
+            modify $ \state ->
+                state
+                    { stateReferences = mainTypeReferences
+                      , stateDefinitions = stateDefinitions state ++ [TranslatedDefinition (Just name) maybeIndex (Just referentialType) Nothing]
+                    }
+            translateValue mainTypeWithValue >>= callReturn "[rbp+16]"
+        )
+    return $ ReturnFunctionName function
+    --    _ -> fail $ show (displayReferentialType <$> maybeReferentialType)
+
+generalizeContext :: ReferentialType -> ReferentialType -> Maybe ReferentialType -> ParserWithState Program ReferentialType
+generalizeContext (ReferentialType frame contextReferences) fromDefinition maybeThisType = uncurry ReferentialType <$> runStateT f contextReferences -- ReferentialType (f context def) references
+  where
+    f = do
+      let freeTypeVariableIndecies = map ((+ length contextReferences) . fst) $ filter (isFreeVariable . snd) $ zip [0..] $ otherTypes fromDefinition
+      inferiorType <- addReferentialType $ toAnyTypeReferences fromDefinition maybeThisType
+      typeGreaterThan frame inferiorType
+      modify $ map (\(index, x) -> if index `elem` freeTypeVariableIndecies then AnyType index [] else x) . zip [0..]
+      return frame 
+    isFreeVariable (ForAllInstances _ []) = True
+    isFreeVariable _ = False
+
+    -- f (TypeReference index) x = f (references !! index) x
+    -- f x (TypeReference index) = f x (references !! index)
+    -- f (Product contextX contextY) (Product definitionX definitionY) = Product (f contextX definitionX) (f contextY definitionY)
+    -- f (Sum contextX contextY) (Sum definitionX definitionY) = Sum (f contextX definitionX) (f contextY definitionY)
+    -- f _ (ForAllInstances index []) = ForAllInstances index []
+    -- f x _ = x
+
+    -- | ForAllInstances Int [Name]
+    -- | AnyType Int [Name]
+    -- | AliasReference Name [Type]
+    -- | AliasExtention Int [Type]
+
 translateInContext :: ParserWithDoubleState TranslationState Program () -> ParserWithDoubleState TranslationState Program String
 translateInContext action = do
     translationIndex <- gets $ length . stateDefinitions
@@ -112,20 +140,15 @@ loadDefinition t name maybeIndex = do
         gets $
             find
                 ( \(_, translatedDefinition) ->
-                    translatedName translatedDefinition == Just name
-                        && maybe
-                            True
-                            ( \alreadyTranslatedType ->
-                                translatedIndex translatedDefinition == maybeIndex
-                                    && referentialType == alreadyTranslatedType
-                            )
-                            (translatedType translatedDefinition)
+                    (translatedName translatedDefinition == Just name)
+                        && (translatedIndex translatedDefinition == maybeIndex)
+                        && (maybe True (== referentialType) (translatedType translatedDefinition))
                 )
                 . zip [0 ..]
                 . stateDefinitions
     case maybeTranslatedDefinition of
         Just (i, _) -> return $ ReturnFunctionName $ createFunctionName i
-        Nothing -> translateDefinition name maybeIndex $ Just referentialType
+        Nothing -> translateDefinition name maybeIndex referentialType
 
 translateValue :: TypeWithValue -> ParserWithDoubleState TranslationState Program ReturnType
 translateValue (TypeWithIntLiteral _ value) = write ("mov rax, " ++ show value ++ "\n") $> ReturnValueInRax
@@ -147,7 +170,7 @@ translateValue (TypeWithFloatLiteral _ value) = do
         createConstantName <$> case maybeIndex of
             (Just i) -> return i
             Nothing -> addFloatSection value
-    write ("mov rax, " ++ name ++ "\n")
+    write ("mov rax, [" ++ name ++ "]\n")
     return ReturnValueInRax
 translateValue (TypeWithProductLiteral _ x y) = do
     write "push 16\ncall alloc\nadd rsp, 8\npush rax\n"
@@ -181,7 +204,7 @@ translateValue (TypeWithUnaryArrowOperator ArrowFirst _ value) =
             write "mov rax, [rbp+16]\n"
             translateValue value >>= callReturn "[rax]"
             -- write "mov rdi, rax\nmov rax, [rsp]\nmov rax, [rax]\ncall rdi\npop rdx\nmov [rdx], rax\nmov rax, rdx\n"
-            write "mov rdx, [rbp+16]\nmov [rdx], rax\nmov rax, rdx\n"
+            write "mov rdx, rax\npush 16\ncall alloc\nmov [rax], rdx\nmov rdi, [rbp+16]\nmov rdi, [rdi+8]\nmov [rax+8], rdi\n"
         )
 translateValue (TypeWithUnaryArrowOperator ArrowSecond _ value) =
     translateAnonymous
@@ -190,7 +213,8 @@ translateValue (TypeWithUnaryArrowOperator ArrowSecond _ value) =
             write "mov rax, [rbp+16]\n"
             translateValue value >>= callReturn "[rax+8]"
             -- write "mov rdi, rax\nmov rax, [rsp]\nmov rax, [rax+8]\ncall rdi\npop rdx\nmov [rdx+8], rax\nmov rax, rdx\n"
-            write "mov rdx, [rbp+16]\nmov [rdx+8], rax\nmov rax, rdx\n"
+            -- write "mov rdx, [rbp+16]\nmov [rdx+8], rax\nmov rax, rdx\n"
+            write "mov rdx, rax\npush 16\ncall alloc\nmov [rax+8], rdx\nmov rdi, [rbp+16]\nmov rdi, [rdi]\nmov [rax], rdi\n"
         )
 translateValue (TypeWithBinaryArrowOperator TripleAsterisks _ x y) =
     translateAnonymous
@@ -199,10 +223,12 @@ translateValue (TypeWithBinaryArrowOperator TripleAsterisks _ x y) =
             write "mov rax, [rbp+16]\n"
             translateValue x >>= callReturn "[rax]"
             -- write "mov rdi, rax\nmov rax, [rsp]\nmov rax, [rax]\ncall rdi\nmov rdx, [rsp]\nmov [rdx], rax\n"
-            write "mov rdx, [rbp+16]\nmov [rdx], rax\n"
-            translateValue y >>= callReturn "[rdx+8]"
+            -- write "mov rdx, [rbp+16]\nmov [rdx], rax\n"
+            write "push rax\nmov rax, [rbp+16]\n"
+            translateValue y >>= callReturn "[rax+8]"
             -- write "mov rdi, rax\nmov rax, [rdx+8]\ncall rdi\npop rdx\nmov [rdx+8], rax\nmov rax, rdx\n"
-            write "mov rdx, [rbp+16]\nmov [rdx+8], rax\nmov rax, rdx\n"
+            -- write "mov rdx, [rbp+16]\nmov [rdx+8], rax\nmov rax, rdx\n"
+            write "mov rdx, rax\npush 16\ncall alloc\nadd rsp, 8\npop rdi\nmov [rax], rdi\nmov [rax+8], rdx\n"
         )
 translateValue (TypeWithBinaryArrowOperator TripleAnd t x y) =
     translateAnonymous
@@ -218,7 +244,8 @@ translateValue (TypeWithUnaryArrowOperator ArrowLeft _ value) =
             write $ "mov rax, [rbp+16]\nmov rcx, [rax]\ntest rcx, rcx\njnz " ++ lable ++ "\n"
             translateValue value >>= callReturn "[rax+8]"
             -- write $ "mov rdi, rax\nmov rax, [rsp]\nmov rax, [rax+8]\ncall rdi\npop rdx\nmov [rdx+8], rax\nmov rax, rdx\n" ++ lable ++ ":\n"
-            write $ "mov rdi, [rbp+16]\nmov [rdi+8], rax\nmov rax, rdi\n" ++ lable ++ ":\n"
+            -- write $ "mov rdi, [rbp+16]\nmov [rdi+8], rax\nmov rax, rdi\n" ++ lable ++ ":\n"
+            write $ "mov rdx, rax\npush 16\ncall alloc\nmov qword [rax], 0\nmov [rax+8], rdx\n" ++ lable ++ ":\n"
         )
 translateValue (TypeWithUnaryArrowOperator ArrowRight _ value) =
     translateAnonymous
@@ -228,7 +255,8 @@ translateValue (TypeWithUnaryArrowOperator ArrowRight _ value) =
             write $ "mov rax, [rbp+16]\nmov rcx, [rax]\ntest rcx, rcx\njz " ++ lable ++ "\n"
             translateValue value >>= callReturn "[rax+8]"
             -- write $ "mov rdi, rax\nmov rax, [rsp]\nmov rax, [rax+8]\ncall rdi\npop rdx\nmov [rdx+8], rax\nmov rax, rdx\n" ++ lable ++ ":\n"
-            write $ "mov rdi, [rbp+16]\nmov [rdi+8], rax\nmov rax, rdi\n" ++ lable ++ ":\n"
+            -- write $ "mov rdi, [rbp+16]\nmov [rdi+8], rax\nmov rax, rdi\n" ++ lable ++ ":\n"
+            write $ "mov rdx, rax\npush 16\ncall alloc\nmov qword [rax], 1\nmov [rax+8], rdx\n" ++ lable ++ ":\n"
         )
 translateValue (TypeWithBinaryArrowOperator TriplePlus _ x y) =
     translateAnonymous
@@ -240,10 +268,12 @@ translateValue (TypeWithBinaryArrowOperator TriplePlus _ x y) =
             write $ "mov rax, [rbp+16]\nmov rcx, [rax]\ntest rcx, rcx\njnz " ++ caseLable ++ "\n"
             translateValue x >>= callReturn "[rax+8]"
             -- write $ "call rdi\njmp " ++ doneLable ++ "\n" ++ caseLable ++ ":\n"
-            write $ "jmp " ++ doneLable ++ "\n" ++ caseLable ++ ":\n"
+            -- write $ "jmp " ++ doneLable ++ "\n" ++ caseLable ++ ":\n"
+            write $ "mov rdx, rax\npush 16\ncall alloc\nmov qword [rax], 0\nmov [rax+8], rdx\njmp " ++ doneLable ++ "\n" ++ caseLable ++ ":\n"
             translateValue y >>= callReturn "[rax+8]"
             -- write $ "call rdi\n" ++ doneLable ++ ":\npop rdi\nmov [rdi+8], rax\nmov rax, rdi\n"
-            write $ doneLable ++ ":\nmov rdi, [rbp+16]\nmov [rdi+8], rax\nmov rax, rdi\n"
+            -- write $ doneLable ++ ":\nmov rdi, [rbp+16]\nmov [rdi+8], rax\nmov rax, rdi\n"
+            write $ "mov rdx, rax\npush 16\ncall alloc\nmov qword [rax], 1\nmov [rax+8], rdx\n" ++ doneLable ++ ":\n"
         )
 translateValue (TypeWithBinaryArrowOperator TripleBar _ x y) =
     translateAnonymous
@@ -260,7 +290,9 @@ translateValue (TypeWithBinaryArrowOperator TripleBar _ x y) =
             -- write $ "call rdi\n" ++ doneLable ++ ":\n"
             write $ doneLable ++ ":\n"
         )
-translateValue (TypeWithUndefined _) = write "mov rax, 60\nmov rdi, -1\nsyscall\n" $> ReturnValueInRax -- TODO: throw error
+translateValue (TypeWithUndefined _ sourcePos) = write ("mov rax, 60\nmov rdi, " ++ show (unPos $ sourceLine sourcePos) ++ "\nsyscall\n") $> ReturnValueInRax -- TODO: throw error
+
+-- show (unPos $ sourceLine sourcePos) 
 
 write :: String -> ParserWithDoubleState TranslationState Program ()
 write newText = modify $ \state -> state{stateText = stateText state ++ newText}
@@ -284,8 +316,8 @@ returnInRax (ReturnFunctionName name) = do
 returnInRax ReturnValueInRax = return ()
 
 callReturn :: String -> ReturnType -> ParserWithDoubleState TranslationState Program ()
-callReturn argument (ReturnFunctionName name) = write $ "push qword " ++ argument ++ "\ncall " ++ name ++ "\n"
-callReturn argument ReturnValueInRax = write $ "push rax\npush qword " ++ argument ++ "\ncall call\n"
+callReturn argument (ReturnFunctionName name) = write $ "push qword " ++ argument ++ "\ncall " ++ name ++ "\nadd rsp, 8\n"
+callReturn argument ReturnValueInRax = write $ "push rax\npush qword " ++ argument ++ "\ncall call\nadd rsp, 16\n"
 
 compilerDefinitions :: [(String, (Maybe ReferentialType, Name))]
 compilerDefinitions =
@@ -296,14 +328,27 @@ compilerDefinitions =
     , ("double", (Nothing, "double"))
     , ("id", (Just $ idArrowType 0, "id"))
     , ("app", (Just $ idArrowType 0, "app"))
-    , ("add", (Nothing, "add"))
-    , ("sub", (Nothing, "sub"))
-    , ("mul", (Nothing, "mul"))
-    , ("div", (Nothing, "div"))
-    , ("mod", (Nothing, "mod"))
+    , ("add_int", (Just $ ReferentialType (AliasReference "Int" []) [], "+"))
+    , ("sub_int", (Just $ ReferentialType (AliasReference "Int" []) [], "-"))
+    , ("mul_int", (Just $ ReferentialType (AliasReference "Int" []) [], "*"))
+    , ("div_int", (Just $ ReferentialType (AliasReference "Int" []) [], "/"))
+    , ("abs_int", (Just $ ReferentialType (AliasReference "Int" []) [], "abs"))
+    , ("neg_int", (Just $ ReferentialType (AliasReference "Int" []) [], "neg"))
+    , ("add_float", (Just $ ReferentialType (AliasReference "Float" []) [], "+"))
+    , ("sub_float", (Just $ ReferentialType (AliasReference "Float" []) [], "-"))
+    , ("mul_float", (Just $ ReferentialType (AliasReference "Float" []) [], "*"))
+    , ("div_folat", (Just $ ReferentialType (AliasReference "Float" []) [], "/"))
+    , ("abs_folat", (Just $ ReferentialType (AliasReference "Float" []) [], "abs"))
+    , ("neg_folat", (Just $ ReferentialType (AliasReference "Float" []) [], "neg"))
+    , ("mod", (Nothing, "%"))
+    , ("cos", (Nothing, "cos"))
+    , ("tan", (Nothing, "tan"))
     , ("not", (Nothing, "not"))
-    , ("and", (Nothing, "and"))
-    , ("or", (Nothing, "or"))
+    , ("and", (Nothing, "&&"))
+    , ("or", (Nothing, "||"))
+    , ("and", (Nothing, "&"))
+    , ("or", (Nothing, "|"))
+    , ("xor", (Nothing, "^"))
     , ("l", (Nothing, "l"))
     , ("r", (Nothing, "r"))
     , ("id", (Nothing, "chr"))
@@ -316,6 +361,12 @@ compilerDefinitions =
     , ("greater_int", (Just $ ReferentialType (AliasReference "Int" []) [], ">"))
     , ("less_equ_int", (Just $ ReferentialType (AliasReference "Int" []) [], "<="))
     , ("greater_equ_int",(Just $ ReferentialType (AliasReference "Int" []) [], ">="))
+    , ("eq_float", (Just $ ReferentialType (AliasReference "Float" []) [], "=="))
+    , ("less_float", (Just $ ReferentialType (AliasReference "Float" []) [], "<"))
+    , ("greater_float", (Just $ ReferentialType (AliasReference "Float" []) [], ">"))
+    , ("less_equ_float", (Just $ ReferentialType (AliasReference "Float" []) [], "<="))
+    , ("greater_equ_float",(Just $ ReferentialType (AliasReference "Float" []) [], ">="))
+    , ("round_float_to_int",(Nothing, "roundToInt"))
     -- , ("is_left",(Nothing, "isLeft"))
     -- , ("is_right",(Nothing, "isRight"))
     , ("first", (Just $ idArrowType 0, "first"))
@@ -327,10 +378,12 @@ compilerDefinitions =
     , ("triple_and", (Just $ idArrowType 0, "&&&"))
     , ("triple_plus", (Just $ idArrowType 0, "+++"))
     , ("triple_bar", (Just $ idArrowType 0, "|||"))
-    , ("flip", (Nothing, "flip"))
-    , ("flip_choice", (Nothing, "flipChoice"))
+    , ("swap", (Nothing, "swap"))
+    , ("swap_choice", (Nothing, "swapChoice"))
     , ("reorder_to_front", (Nothing, "reorderToFront"))
     , ("reorder_to_back", (Nothing, "reorderToBack"))
+    , ("expand_choice_left", (Nothing, "expandChoiceLeft"))
+    , ("expand_choice_right", (Nothing, "expandChoiceRight"))
     ]
 
 createFunctionName :: Int -> String

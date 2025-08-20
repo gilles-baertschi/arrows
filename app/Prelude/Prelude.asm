@@ -4,11 +4,12 @@ mov rbp, rsp
 mov rax, 12
 xor rdi, rdi
 syscall
+push rax
 mov rdi, [rbp+16]
 add rdi, rax
 mov rax, 12
 syscall
-mov rax, rdi
+pop rax
 mov rsp, rbp
 pop rbp
 ret
@@ -89,7 +90,7 @@ mov rsp, rbp
 pop rbp
 ret
 
-flip:
+swap:
 push rbp
 mov rbp, rsp
 push 16
@@ -103,7 +104,7 @@ mov rsp, rbp
 pop rbp
 ret
 
-flip_choice:
+swap_choice:
 push rbp
 mov rbp, rsp
 push 16
@@ -170,7 +171,51 @@ mov rsp, rbp
 pop rbp
 ret
 
-add:
+; (c, (a | b)) -> ((c, a) | (c, b)) 
+expand_choice_left:
+push rbp
+mov rbp, rsp
+push 16
+call alloc
+mov rdx, rax
+push 16
+call alloc
+mov rdi, [rbp+16]
+mov rsi, [rdi+8]
+mov rcx, [rsi]
+mov [rax], rcx
+mov [rax+8], rdx
+mov rcx, [rdi]
+mov [rdx], rcx
+mov rcx, [rsi+8]
+mov [rdx+8], rcx
+mov rsp, rbp
+pop rbp
+ret
+
+; ((a | b), c) -> ((a, c) | (b, c)) 
+expand_choice_right:
+push rbp
+mov rbp, rsp
+push 16
+call alloc
+mov rdx, rax
+push 16
+call alloc
+mov rdi, [rbp+16]
+mov rsi, [rdi]
+mov rcx, [rsi]
+mov [rax], rcx
+mov [rax+8], rdx
+mov rcx, [rdi+8]
+mov [rdx+8], rcx
+mov rcx, [rsi+8]
+mov [rdx], rcx
+mov rsp, rbp
+pop rbp
+ret
+
+add_int:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
@@ -181,7 +226,7 @@ mov rsp, rbp
 pop rbp
 ret
 
-sub:
+sub_int:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
@@ -192,7 +237,7 @@ mov rsp, rbp
 pop rbp
 ret
 
-mul:
+mul_int:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
@@ -203,7 +248,7 @@ mov rsp, rbp
 pop rbp
 ret
 
-div:
+div_int:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
@@ -224,6 +269,150 @@ mov rax, [rax]
 xor edx, edx
 idiv rcx
 mov rax, rdx
+mov rsp, rbp
+pop rbp
+ret
+
+neg_int:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+neg rax
+mov rsp, rbp
+pop rbp
+ret
+
+abs_int:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+mov rcx, rax
+neg rcx
+cmovge rax, rcx
+mov rsp, rbp
+pop rbp
+ret
+
+add_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fadd
+sub rsp, 8
+fstp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+sub_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fsub
+sub rsp, 8
+fstp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+mul_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fmul
+sub rsp, 8
+fstp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+div_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fdiv
+sub rsp, 8
+fstp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+round_float_to_int:
+push rbp
+mov rbp, rsp
+finit
+fld qword [rbp+16]
+sub rsp, 8
+fistp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+abs_float:
+push rbp
+mov rbp, rsp
+finit
+fld qword [rbp+16]
+fabs
+sub rsp, 8
+fistp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+neg_float:
+push rbp
+mov rbp, rsp
+finit
+fld qword [rbp+16]
+fchs
+sub rsp, 8
+fistp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+cos:
+push rbp
+mov rbp, rsp
+finit
+fld qword [rbp+16]
+fcos
+sub rsp, 8
+fistp qword [rsp]
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+tan:
+push rbp
+mov rbp, rsp
+finit
+fld qword [rbp+16]
+fptan
+sub rsp, 8
+fistp qword [rsp]
+pop rax
 mov rsp, rbp
 pop rbp
 ret
@@ -258,6 +447,18 @@ or rax, rcx
 mov rsp, rbp
 pop rbp
 ret
+
+xor:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+mov rcx, [rax+8]
+mov rax, [rax]
+xor rax, rcx
+mov rsp, rbp
+pop rbp
+ret
+
 
 bool_to_choice:
 push rbp
@@ -322,7 +523,7 @@ ret
 
 greater_int:
 push rbp
-mov rbp, rsp
+; mov rbp, rsp
 mov rax, [rbp+16]
 mov rcx, [rax+8]
 mov rax, [rax]
@@ -333,7 +534,7 @@ mov rsp, rbp
 pop rbp
 ret
 
-less_equ_int:
+less_eq_int:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
@@ -346,7 +547,7 @@ mov rsp, rbp
 pop rbp
 ret
 
-greater_equ_int:
+greater_eq_int:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
@@ -355,6 +556,81 @@ mov rax, [rax]
 cmp rax, rcx
 setge al
 movzx rax, al
+mov rsp, rbp
+pop rbp
+ret
+
+eq_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fcomi
+sete al
+movzx rax, al
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+less_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fcomi
+setl al
+movzx rax, al
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+greater_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fcomi
+setg al
+movzx rax, al
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+less_eq_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fcomi
+setle al
+movzx rax, al
+pop rax
+mov rsp, rbp
+pop rbp
+ret
+
+greater_eq_float:
+push rbp
+mov rbp, rsp
+mov rax, [rbp+16]
+finit
+fld qword [rax]
+fld qword [rax+8]
+fcomi
+setge al
+movzx rax, al
+pop rax
 mov rsp, rbp
 pop rbp
 ret
@@ -402,7 +678,7 @@ push rbp
 mov rbp, rsp
 mov rdi, [rbp+24]
 push qword [rdi]
-push qword [rdi+16]
+push qword [rbp+16]
 call call
 mov rdi, [rbp+24]
 push qword [rdi+8]
@@ -472,7 +748,7 @@ push 16
 call alloc
 mov [rax+8], rdx
 mov rdi, [rbp+16]
-mov rdi, [rdi+8]
+mov rdi, [rdi]
 mov [rax], rdi
 mov rsp, rbp
 pop rbp
@@ -500,15 +776,18 @@ push qword [rdi]
 mov rdi, [rbp+16]
 push qword [rdi]
 call call
+add rsp, 16
 push rax
 mov rdi, [rbp+24]
 push qword [rdi+8]
 mov rdi, [rbp+16]
 push qword [rdi+8]
 call call
+add rsp, 16
 mov rdx, rax
 push 16
 call alloc
+add rsp, 8
 mov [rax+8], rdx
 pop rdx
 mov [rax], rdx
@@ -537,13 +816,16 @@ mov rdi, [rbp+24]
 push qword [rdi]
 push qword [rbp+16]
 call call
+add rsp, 16
 push rax
 mov rdi, [rbp+24]
 push qword [rdi+8]
 push qword [rbp+16]
 call call
+add rsp, 16
 mov rdx, rax
 push 16
+add rsp, 8
 call alloc
 mov [rax+8], rdx
 pop rdx
@@ -580,7 +862,7 @@ mov rdx, rax
 push 16
 call alloc
 mov qword [rax], 0
-mov [rax], rdx
+mov [rax+8], rdx
 jmp .done_left
 .case_left:
 mov rax, [rbp+16]
@@ -609,7 +891,7 @@ mov rbp, rsp
 mov rdi, [rbp+16]
 mov rcx, [rdi]
 test rcx, rcx
-jz .case_left
+jz .case_right
 push qword [rbp+24]
 push qword [rdi+8]
 call call
@@ -617,11 +899,11 @@ mov rdx, rax
 push 16
 call alloc
 mov qword [rax], 1
-mov [rax], rdx
-jmp .done_left
-.case_left:
+mov [rax+8], rdx
+jmp .done_right
+.case_right:
 mov rax, [rbp+16]
-.done_left:
+.done_right:
 mov rsp, rbp
 pop rbp
 ret
@@ -646,7 +928,7 @@ mov rbp, rsp
 mov rdi, [rbp+16]
 mov rcx, [rdi]
 test rcx, rcx
-jnz .case_left
+jnz .case_right
 mov rdx, [rbp+24]
 push qword [rdx]
 push qword [rdi+8]
@@ -655,9 +937,9 @@ mov rdx, rax
 push 16
 call alloc
 mov qword [rax], 0
-mov [rax], rdx
+mov [rax+8], rdx
 jmp .done_left
-.case_left:
+.case_right:
 mov rdx, [rbp+24]
 push qword [rdx+8]
 push qword [rdi+8]
@@ -666,7 +948,7 @@ mov rdx, rax
 push 16
 call alloc
 mov qword [rax], 1
-mov [rax], rdx
+mov [rax+8], rdx
 .done_left:
 mov rsp, rbp
 pop rbp

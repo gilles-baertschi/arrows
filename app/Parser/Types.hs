@@ -5,6 +5,7 @@ module Parser.Types where
 import Ast
 import Control.Monad.Combinators.Expr
 import Control.Monad.State
+import Control.Monad
 import Data.Functor
 import Data.List
 import Data.List.Unique

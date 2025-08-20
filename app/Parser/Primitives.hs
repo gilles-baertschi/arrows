@@ -4,6 +4,7 @@ module Parser.Primitives where
 
 import Ast
 import Control.Monad.State
+import Control.Monad
 import Data.Char
 import Data.Functor
 import Data.Text hiding (elem)
@@ -61,12 +62,12 @@ signedFloatP = L.signed spaceP $ lexeme L.float
 lowerCaseNameP :: Parser Name
 lowerCaseNameP = lexeme $ Name <$> getOffset <*> lowerCaseStringP
   where
-    lowerCaseStringP = (specialStringP <|> ((:) <$> lowerChar <*> many alphaNumChar)) >>= notKeyword
+    lowerCaseStringP = specialStringP <|> (((:) <$> lowerChar <*> many alphaNumChar) >>= notKeyword)
 
 upperCaseNameP :: Parser Name
 upperCaseNameP = lexeme $ Name <$> getOffset <*> upperCaseStringP
   where
-    upperCaseStringP = (specialStringP <|> ((:) <$> upperChar <*> many alphaNumChar)) >>= notKeyword
+    upperCaseStringP = specialStringP <|> (((:) <$> upperChar <*> many alphaNumChar) >>= notKeyword)
 
 notKeyword :: String -> Parser String
 notKeyword name = do

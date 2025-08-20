@@ -140,8 +140,8 @@ assertValueNameSafety = check
     check (SumLiteral _ _ x) = check x
     check (DefinedValue name) = assertValueNameExist name
     check (DefinedValueFromInstance name (Right instancedType)) = assertValueNameExist name >> assertTypeNameSafety False instancedType
-    check (BinaryArrowOperator _ _ _ x y) = check x >> check y
-    check (UnaryArrowOperator _ _ _ x) = check x
+    check (BinaryArrowOperator _ _ maybeInstnacedType x y) = check x >> check y >> maybe (return ()) (assertTypeNameSafety False) maybeInstnacedType
+    check (UnaryArrowOperator _ _ maybeInstnacedType x) = check x >> maybe (return ()) (assertTypeNameSafety False) maybeInstnacedType
     check _ = return ()
 
 assertInstanceNameSafety :: Instance -> ParserWithDoubleState Names Program ()

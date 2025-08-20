@@ -1,0 +1,15 @@
+Usage: arrows [OPTIONS] [FILE]
+
+A compiler for the Arrows programing language.
+
+Options:
+    -h, --help              Show help message and exit
+    -o, --output FILE       Specify the name of the final executable
+    -e, --execute           Execute after compilation
+    -d, --debug             Add debug symbols
+
+Arguments:
+    [FILE]                  File with the source-code
+
+Examples:
+    arrows -o out in.arr    Compile in.arr and generate executable named out
