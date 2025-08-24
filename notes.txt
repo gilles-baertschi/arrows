@@ -1,5 +1,5 @@
 extended fp:
 
-0, fp
-1, arg, fp
+fp
+0, arg, fp
 

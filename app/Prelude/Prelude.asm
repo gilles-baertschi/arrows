@@ -172,7 +172,7 @@ pop rbp
 ret
 
 ; (c, (a | b)) -> ((c, a) | (c, b)) 
-expand_choice_left:
+include_left:
 push rbp
 mov rbp, rsp
 push 16
@@ -194,7 +194,7 @@ pop rbp
 ret
 
 ; ((a | b), c) -> ((a, c) | (b, c)) 
-expand_choice_right:
+include_right:
 push rbp
 mov rbp, rsp
 push 16
@@ -664,7 +664,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, composition_inner
@@ -694,7 +694,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, first_inner
@@ -727,7 +727,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, second_inner
@@ -759,7 +759,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, triple_asterisk_inner
@@ -800,7 +800,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, triple_and_inner
@@ -839,7 +839,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, left_inner
@@ -876,7 +876,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, right_inner
@@ -913,7 +913,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, triple_plus_inner
@@ -959,7 +959,7 @@ push rbp
 mov rbp, rsp
 push 24
 call alloc
-mov qword [rax], 1
+mov qword [rax], 0
 mov rdi, [rbp+16]
 mov [rax+8], rdi
 lea rdi, triple_bar_inner
@@ -997,8 +997,8 @@ mov rbp, rsp
 mov rdi, [rbp+24]
 mov rax, [rdi]
 cmp rax, 0
-jne .extend
-mov rax, [rdi+8]
+je .extend
+mov rax, rdi
 jmp .done
 .extend:
 push qword [rdi+8]

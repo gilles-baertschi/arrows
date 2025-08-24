@@ -11,7 +11,6 @@ import Data.Text (pack)
 import Parser.Primitives
 import Parser.Types
 import Text.Megaparsec
-import Text.Megaparsec.Char
 import Data.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 

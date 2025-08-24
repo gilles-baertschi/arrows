@@ -5,7 +5,6 @@ import Control.Monad
 import Control.Monad.State
 import Data.List
 import Parser.Primitives
-import Data.Maybe
 
 getAlias :: Name -> ParserWithState Program TypeAlias
 getAlias name = gets $ head . filter ((name ==) . aliasName) . aliases
@@ -42,8 +41,8 @@ getDefinitionsFromName name = do
 getInstances :: Name -> ParserWithState Program [Instance]
 getInstances name = gets $ filter ((name ==) . instanceClassName) . instances
 
-getIndeciesFromNameAndInstancType :: Name -> ReferentialType -> ParserWithState Program [Int]
-getIndeciesFromNameAndInstancType name referentialType = do 
+getIndeciesFromNameAndInstanceType :: Name -> ReferentialType -> ParserWithState Program [Int]
+getIndeciesFromNameAndInstanceType name referentialType = do 
     instancesWithName <- gets $ filter (elem name . map fst . instanceMembers) . instances
     return $ map fst $ filter ((== referentialType) . instanceType . snd) $ zip [0..] instancesWithName
 

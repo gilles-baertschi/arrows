@@ -9,7 +9,6 @@ import Parser.Primitives
 import Text.Megaparsec hiding (State)
 import Data.Either
 import Data.Bifunctor
-import Data.List
 
 checkTypeSafety :: ParserWithState Program ()
 checkTypeSafety = do
@@ -53,23 +52,23 @@ assertType frame content@(DefinedValue name) = do
                                  thisType <- lift $ gets $ instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances
                                  inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance $ Just thisType
                                  typeGreaterThanWithOffset (nameOffset name) frame inferiorType
-                                 state <- get
+                                 s <- get
                                  put backup
-                                 return [(TypeWithDefinedValueFromInstance frame name index, state)]
+                                 return [(TypeWithDefinedValueFromInstance frame name index, s)]
                                  ) <|> (put backup >> return [])
                         )
                         (zip [0 ..] fromInstances)
             case possibleIndecies of
                 [] -> failTypeInference frame content
                 xs -> return xs
-assertType frame content@(DefinedValueFromInstance name (Left index)) = do
+assertType frame (DefinedValueFromInstance name (Left index)) = do
     fromInstance <- lift $ (!! index) . fromRight undefined <$> getTypesFromName name
     thisType <- lift $ gets $ instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances
     inferiorType <- addReferentialType $ toAnyTypeReferences fromInstance $ Just thisType
     typeGreaterThanWithOffset (nameOffset name) frame inferiorType
     returnTypeWithValueAndState $ TypeWithDefinedValueFromInstance frame name index
-assertType frame content@(DefinedValueFromInstance name (Right instancedType)) = do
-    possibleIndecies <- lift $ getIndeciesFromNameAndInstancType name instancedType
+assertType frame (DefinedValueFromInstance name (Right instancedType)) = do
+    possibleIndecies <- lift $ getIndeciesFromNameAndInstanceType name instancedType
     case possibleIndecies of
         [] -> do 
             setOffset $ nameOffset name
@@ -226,18 +225,18 @@ assertArrow arrowInstance inputType outputType content =
 
 returnTypeWithValueAndState :: TypeWithValue -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
 returnTypeWithValueAndState typeWithValue = do
-    state <- get
-    return [(typeWithValue, state)]
+    s <- get
+    return [(typeWithValue, s)]
 
 assertTypeWithState :: [Type] -> Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
-assertTypeWithState state frame value = do
-    put state
+assertTypeWithState s frame value = do
+    put s
     assertType frame value
 
 combineAssertion :: [(TypeWithValue, [Type])] -> (TypeWithValue -> TypeWithValue -> TypeWithValue) -> Type -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
 combineAssertion possibilities combine frame content = do
-    result <- concat <$> mapM (\(x, state) -> do
-            (map (first $ combine x) <$> assertTypeWithState state frame content) <|> return []
+    result <- concat <$> mapM (\(x, s) -> do
+            (map (first $ combine x) <$> assertTypeWithState s frame content) <|> return []
         ) possibilities
     case result of
         [] -> failTypeInference frame content
@@ -272,11 +271,7 @@ typeGreaterThan (AliasExtention index arguments) inferior = do
     core <- gets (!! index)
     case core of
         (AliasReference name coreArguments) -> typeGreaterThan (AliasReference name (coreArguments ++ arguments)) inferior
-        (ForAllInstances _ []) -> undefined
-        (ForAllInstances _ _) -> undefined
-        ThisClass -> undefined
-        (AnyType _ _) -> undefined
-        x -> undefined -- fail $ "expected alias reference " ++ show x
+        _ -> undefined
 typeGreaterThan superior (AliasExtention index arguments) = do
     core <- gets (!! index)
     case core of
@@ -292,7 +287,7 @@ typeGreaterThan superior (AnyType index classNames) = do
 typeGreaterThan (AnyType index classNames) inferior = do
     mapM_ (resolveInstanceOf inferior) classNames
     modify $ replace index inferior
-typeGreaterThan superior@(ForAllInstances superiorIndex superiorClassNames) inferior@(ForAllInstances inferiorIndex inferiorClassNames) = do
+typeGreaterThan superior@(ForAllInstances superiorIndex _) inferior@(ForAllInstances inferiorIndex _) = do
     unless (superiorIndex == inferiorIndex) $ failTypeMatch superior inferior
     -- unless (all (`elem` inferiorClassNames) inferiorClassNames) $ failTypeMatch superior inferior
     -- mapM_ (resolveInstanceOf inferior) classNames
@@ -376,7 +371,7 @@ getTypeFromValue (DefinedValueFromInstance name (Left index)) = do
     thisType <- lift $ gets $ instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances
     (:[]) <$> (addReferentialType $ toAnyTypeReferences referentialType $ Just thisType)
 getTypeFromValue (DefinedValueFromInstance name (Right instancedType)) = do
-    possibleIndecies <- lift $ getIndeciesFromNameAndInstancType name instancedType
+    possibleIndecies <- lift $ getIndeciesFromNameAndInstanceType name instancedType
     case possibleIndecies of
         [] -> do 
             setOffset $ nameOffset name
@@ -412,14 +407,14 @@ getTypeFromValue (DefinedValueFromInstance name (Right instancedType)) = do
 --     return [AliasExtention index [inputType, outputType]]
 getTypeFromValue x = fail $ "not implemented getting a type from this value " ++ show x
 
+-- arr f = double >>> first (const f >>> arr) >>> app
 applyOperator :: ParsingOffset -> Value -> Value -> Value
-applyOperator offset operator inner = idArrow -- arr f = double >>> first (const f >>> arr) >>> app
+applyOperator offset operator inner = BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) (BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) arrowDouble arrowFirst) arrowApp
   where
-    idArrow = BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) (BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) double first) app
-    first = UnaryArrowOperator ArrowFirst offset (Just $ idArrowType offset) $ BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) constF operator
+    arrowFirst = UnaryArrowOperator ArrowFirst offset (Just $ idArrowType offset) $ BinaryArrowOperator ArrowComposition offset (Just $ idArrowType offset) constF operator
     constF = UnaryArrowOperator ArrowConstant offset (Just $ idArrowType offset) inner
-    app = DefinedValueFromInstance (Name offset "app") (Right $ idArrowType offset)
-    double = DefinedValue $ Name offset "double"
+    arrowApp = DefinedValueFromInstance (Name offset "app") (Right $ idArrowType offset)
+    arrowDouble = DefinedValue $ Name offset "double"
 
 assertArrowOperator :: Type -> Value -> ParsingOffset -> String -> Maybe ReferentialType -> Value -> ParserWithDoubleState [Type] Program [(TypeWithValue, [Type])]
 assertArrowOperator frame content offset operatorString referentialType inner = do

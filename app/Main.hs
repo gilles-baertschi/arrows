@@ -7,7 +7,6 @@ import Checker.Names
 import Checker.Types
 import Data.FileEmbed (embedStringFile)
 import Data.Text (replace, unpack, pack)
-import qualified Data.Text.IO as T
 import Parser.Primitives
 import Parser.Program
 import Parser.Types

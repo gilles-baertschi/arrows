@@ -1,12 +1,11 @@
 main :: IO () ()
--- main = id
-main = arr test >>> (print *** (arr double >>> (const '[' >>> putChar) *** print)) >>> const '\n' >>> putChar
+main = arr test >>> print >>> const '\n' >>> putChar
 
-test :: () -> (String, String)
-test = const ((), (([], [True]), (0, [(((False, l ()), l ()), ((True, r True), r 0))]))) >>> execMachine >>>[Id] snd >>>[Id] displayMachine
+test :: () -> String
+test = const ((), (initial, (0, rules))) >>> execMachine >>>[Id] snd >>>[Id] displayMachine
 
-displayMachine :: Machine -> (String, String)
-displayMachine = fst >>> (reverse >>> boolListToString) *** boolListToString
+displayMachine :: Machine -> String
+displayMachine = fst >>> (double >>> (reverse >>> boolListToString) *** const "[" >>> (<>)) *** (fromRight >>> (double >>> (boolToChar >>> show) *** const "]" >>> (<>)) *** boolListToString>>> (<>)) >>> (<>) 
 
 boolListToString :: List Bool -> String
 boolListToString = double >>> first (const boolToChar) >>> map
@@ -15,7 +14,10 @@ boolToChar :: Bool -> Char
 boolToChar = boolToChoice >>> const '0' ||| const '1'
 
 rules :: List Rule
-rules = [(((True, l ()), l ()), ((True, r True), r 0))]
+rules = [(((True, r True), r 1), ((True, r False), r 1)), (((True, r False), r 0), ((False, r False), r 2)), (((True, r True), l ()), ((True, r False), r 3)), (((True, r True), r 3), ((False, r True), r 0))]
+
+initial :: (List Bool, List Bool)
+initial = ([], [False])
 
 type Machine = ((List Bool, List Bool), (Int, List Rule))
 type Rule = (RulePart, RulePart)
@@ -25,7 +27,7 @@ execMachine :: State Machine () ()
 execMachine = getRulePart >>> (writeAndMove *** continueExec) >>> const ()
 
 getRulePart :: State Machine a RulePart
-getRulePart = readAtHead &&& getRule >>> arr (choice >>> fst ||| snd)
+getRulePart = readAtHead &&& getRule >>>[Id] arr (choice >>> fst ||| snd)
 
 continueExec :: State Machine (() | Int) ()
 continueExec = right (setRule >>>[State s] execMachine) >>> const ()
@@ -34,7 +36,7 @@ writeAndMove :: State Machine (Bool, (() | Bool)) ()
 writeAndMove = writeAtHead *** moveHead >>> const ()
 
 readAtHead :: State Machine a Bool
-readAtHead = get >>> arr (fst >>> snd >>> head)
+readAtHead = get >>>[Id] arr[State s] (fst >>> snd >>> head)
 
 writeAtHead :: State Machine Bool ()
 writeAtHead = arr double >>>[Id] first get >>>[Id] arr (changeHead >>> fst) >>> put
@@ -47,11 +49,9 @@ moveHead = right (arr boolToChoice >>> moveHeadLeft ||| moveHeadRight) >>> const
 
 moveHeadLeft :: State Machine a ()
 moveHeadLeft = get >>> first[State s] (arr (first extendIfNeeded >>> moveRight)) >>> put
--- moveHeadLeft = get >>> first[State s] (arr moveRight) >>> put
 
 moveHeadRight :: State Machine a ()
 moveHeadRight = get >>> first[State s] (arr (second (fromRight >>> second extendIfNeeded >>> r) >>> moveLeft)) >>> put
--- moveHeadRight = get >>> first[State s] (arr moveLeft) >>> put
 
 extendIfNeeded :: List Bool -> List Bool
 extendIfNeeded = (const (r (False, l ()))) ||| r
