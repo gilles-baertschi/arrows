@@ -62,12 +62,12 @@ signedFloatP = L.signed spaceP $ lexeme L.float
 lowerCaseNameP :: Parser Name
 lowerCaseNameP = lexeme $ Name <$> getOffset <*> lowerCaseStringP
   where
-    lowerCaseStringP = specialStringP <|> (((:) <$> lowerChar <*> many alphaNumChar) >>= notKeyword)
+    lowerCaseStringP = specialStringP <|> (((:) <$> lowerChar <*> many (satisfy (\x -> isAlphaNum x || x == '_'))) >>= notKeyword)
 
 upperCaseNameP :: Parser Name
 upperCaseNameP = lexeme $ Name <$> getOffset <*> upperCaseStringP
   where
-    upperCaseStringP = specialStringP <|> (((:) <$> upperChar <*> many alphaNumChar) >>= notKeyword)
+    upperCaseStringP = specialStringP <|> (((:) <$> upperChar <*> many (satisfy (\x -> isAlphaNum x || x == '_'))) >>= notKeyword)
 
 notKeyword :: String -> Parser String
 notKeyword name = do

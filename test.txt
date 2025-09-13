@@ -1,17 +1,28 @@
 main :: IO () ()
 main = arr test >>> print >>> const '\n' >>> putChar
+-- main = ask >>> arr (read >>> offAge) >>> answer >>> const '\n' >>> putChar
+-- main = const (l (r (8, 5))) >>> arr show >>> print
 
-test :: () -> String
-test = const ((), (initial, (0, rules))) >>> execMachine >>>[Id] snd >>>[Id] displayMachine
+test :: () -> String 
+test = const ((), (initial, (0, rules))) >>> execMachine >>>[Id] snd >>>[Id] show[Machine]
 
-displayMachine :: Machine -> String
-displayMachine = fst >>> (double >>> (reverse >>> boolListToString) *** const "[" >>> (<>)) *** (fromRight >>> (double >>> (boolToChar >>> show) *** const "]" >>> (<>)) *** boolListToString>>> (<>)) >>> (<>) 
+-- answer :: IO Bool ()
+-- answer = arr boolToChoice >>> const "zu jung" ||| const "alt genug" >>> print
 
-boolListToString :: List Bool -> String
-boolListToString = double >>> first (const boolToChar) >>> map
+-- offAge :: Int -> Bool
+-- offAge = double >>> second (const 18) >>> (>=)
 
-boolToChar :: Bool -> Char
-boolToChar = boolToChoice >>> const '0' ||| const '1'
+-- ask :: IO () String
+-- ask = const "Wie alt bist du? " >>> print >>> readLine
+
+instance Show Machine where
+   show = fst >>> (double >>> (reverse >>> boolListTo01) *** const "[" >>> (<>)) *** (fromRight >>> (double >>> (boolTo01 >>> double >>> second (const (l ())) >>> r) *** const "]" >>> (<>)) *** boolListTo01 >>> (<>)) >>> (<>) 
+
+boolListTo01 :: List Bool -> String
+boolListTo01 = double >>> first (const boolTo01) >>> map
+
+boolTo01 :: Bool -> Char
+boolTo01 = boolToChoice >>> const '0' ||| const '1'
 
 rules :: List Rule
 rules = [(((True, r True), r 1), ((True, r False), r 1)), (((True, r False), r 0), ((False, r False), r 2)), (((True, r True), l ()), ((True, r False), r 3)), (((True, r True), r 3), ((False, r True), r 0))]

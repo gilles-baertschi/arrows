@@ -61,6 +61,7 @@ data TypeWithValue
     | TypeWithUndefined Type SourcePos
     | TypeWithUnaryArrowOperator UnaryArrowOperator Type TypeWithValue
     | TypeWithBinaryArrowOperator BinaryArrowOperator Type TypeWithValue TypeWithValue
+    | TypeWithUntranslateable Type
     deriving (Eq, Ord, Show)
 
 data ReferentialType = ReferentialType {mainType :: Type, otherTypes :: [Type]}

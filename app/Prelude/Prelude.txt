@@ -50,6 +50,9 @@ class Num a where
 class Show a where
     show :: a -> String
 
+class Read a where
+    read :: String -> a
+
 instance Arrow Id where
     id = undefined
     arr = undefined
@@ -161,11 +164,29 @@ instance Num Float where
 instance Show Bool where
     show = boolToChoice >>> const "False" ||| const "True"
 
-instance Show Char where
-    show = double >>> second (const (l ())) >>> r
-
 instance Show Int where
     show = double >>> (first isZero) >>> choice >>> (double >>> first hasSignBit >>> choice >>> (mulpipleDigitsToChar >>> reverse) ||| (double >>> first (const (-1)) >>> (*) >>> mulpipleDigitsToChar >>> reverse >>> double >>> first (const '-') >>> r)) ||| (const "0")
+
+instance Show Char where
+    show = double >>> second (const "'") >>> r >>> double >>> first (const "'") >>> (<>)
+
+instance Show () where
+    show = const "()"
+
+instance Show (Show a, Show b) => (a , b) where
+    show = (show >>> double >>> first (const "(") >>> (<>) >>> double >>> second (const ", ") >>> (<>)) *** (show >>> double >>> second (const ")") >>> (<>)) >>> (<>)
+
+instance Show (Show a, Show b) => (a | b) where
+    show = (show >>> double >>> first (const "l ") >>> (<>)) ||| (show >>> double >>> first (const "r ") >>> (<>))
+
+-- instance Show String where
+--     show = id
+
+instance Read Int where
+    read = double >>> first (head >>> double >>> second (const '-') >>> (==)) >>> choice >>> (double >>> second (const 0) >>> readPartialInt) ||| (tail >>> double >>> second (const 0) >>> readPartialInt >>> double >>> second (const -1) >>> (*))
+
+readPartialInt :: (String, Int) -> Int
+readPartialInt = includeRight >>> snd ||| (double >>> (fst >>> snd) *** ((fst >>> ord >>> double >>> second (const 48) >>> (-)) *** (double >>> second (const 10) >>> (*)) >>> (+)) >>> readPartialInt)
 
 excludeLeft :: ((c, a) | (c, b)) -> (c, (a | b))
 excludeLeft = second l ||| second r
@@ -230,18 +251,14 @@ head = undefined ||| fst
 tail :: List a -> List a
 tail = undefined ||| snd
 
-
 (%) :: (Int, Int) -> Int
 (%) = undefined
 
-roundToInt :: Float -> Int
-roundToInt = undefined
+float2Int :: Float -> Int
+float2Int = undefined
 
-cos :: Float -> Float
-cos = undefined
-
-tan :: Float -> Float
-tan = undefined
+pi :: Float
+pi = 3.1415926535897931
 
 not :: Bool -> Bool
 not = undefined
@@ -274,7 +291,7 @@ choice :: (Bool, a) -> (a | a)
 choice = undefined
 
 resolveChoice :: (a | a) -> a
-resolveChoice = id ||| id
+resolveChoice = id[Id] ||| id[Id]
 
 l :: a -> (a | b)
 l = undefined
@@ -299,6 +316,9 @@ putChar = undefined
 
 print :: IO String ()
 print = right (putChar *** print) >>> const ()
+
+readLine :: IO () String
+readLine = readChar >>> arr (double >>> first (double >>> second (const '\n') >>> (==)) >>> choice) >>> (arr double >>> second (const () >>> readLine) >>> arr r) ||| arr (const (l ()))
 
 reverse :: List a -> List a
 reverse = double >>> second (const (l ())) >>> moveAllRight >>> snd

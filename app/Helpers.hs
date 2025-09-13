@@ -151,6 +151,23 @@ displayReferentialType (ReferentialType t references) = evalState (display t) []
             Nothing -> modify (++ [indexInReferences]) >> return (length indecies)
             (Just indexInNames) -> return indexInNames
 
+displayValue :: Value -> String
+displayValue (ProductLiteral _ x y) = "(" ++ displayValue x ++ ", " ++ displayValue y ++ ")"
+displayValue (SumLiteral _ boolChoice x) = (if boolChoice then "r (" else "l (") ++ displayValue x ++ ")"
+displayValue (BoolLiteral _ x) = show x
+displayValue (IntLiteral _ x) = show x
+displayValue (FloatLiteral _ x) = show x
+displayValue (CharLiteral _ x) = show x
+displayValue (EmptyTupleLiteral _) = "()"
+displayValue (DefinedValue name) = nameString name
+displayValue (DefinedValueFromInstance name (Left index)) = nameString name
+displayValue (DefinedValueFromInstance name (Right referentialType)) = nameString name
+displayValue (Undefined _ _) = "undefined"
+displayValue (UnaryArrowOperator operator _ Nothing x) = show operator ++ " (" ++ displayValue x ++ ")"
+displayValue (UnaryArrowOperator operator _ (Just referentialType) x) = show operator ++ " (" ++ displayValue x ++ ")"
+displayValue (BinaryArrowOperator operator _ Nothing x y) = "(" ++ displayValue x ++ ") " ++ show operator ++ " (" ++ displayValue y ++ ")"
+displayValue (BinaryArrowOperator operator _ (Just referentialType) x y) = "(" ++ displayValue x ++ " " ++ show operator ++ " " ++ displayValue y ++ ")"
+
 getDefinitionsFromInstance :: Instance -> ParserWithState Program [Definition]
 getDefinitionsFromInstance (Instance insertedType className members) = do
     (TypeClass _ _ classMembers) <- gets $ head . filter ((className ==) . typeClassName) . typeClasses

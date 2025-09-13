@@ -3,3 +3,7 @@ extended fp:
 fp
 0, arg, fp
 
+bugs:
+- type A = A can lead to infinite recursion
+- show String (or any other recursive data sructure) of unknown length leads to infinite recursion
+

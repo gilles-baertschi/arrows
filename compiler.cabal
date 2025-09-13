@@ -68,7 +68,7 @@ executable compiler
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
-    build-depends:    base ^>=4.18.3.0, text, megaparsec, parser-combinators, mtl, lens, Unique, sort, prettyprinter, file-embed, process, split
+    build-depends:    base ^>=4.18.3.0, text, megaparsec, parser-combinators, mtl, lens, Unique, sort, prettyprinter, file-embed, process, split, containers
 
     other-modules:    Parser.Primitives, Parser.Program, Parser.Types, Parser.Values, Ast, Checker.Names, Checker.Types, Helpers, Translator
 

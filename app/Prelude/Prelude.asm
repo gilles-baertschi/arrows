@@ -297,13 +297,17 @@ add_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fadd
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+addsd xmm0, xmm1
 sub rsp, 8
-fstp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+movq rdx, xmm0
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
@@ -312,13 +316,17 @@ sub_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fsub
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+subsd xmm0, xmm1
 sub rsp, 8
-fstp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+movq rdx, xmm0
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
@@ -327,13 +335,17 @@ mul_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fmul
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+mulsd xmm0, xmm1
 sub rsp, 8
-fstp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+movq rdx, xmm0
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
@@ -342,25 +354,26 @@ div_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fdiv
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+divsd xmm0, xmm1
 sub rsp, 8
-fstp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+movq rdx, xmm0
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
 
-round_float_to_int:
+float_to_int:
 push rbp
 mov rbp, rsp
-finit
-fld qword [rbp+16]
-sub rsp, 8
-fistp qword [rsp]
-pop rax
+mov rdx, [rbp+16]
+cvttsd2si rax, [rdx]
 mov rsp, rbp
 pop rbp
 ret
@@ -369,11 +382,16 @@ abs_float:
 push rbp
 mov rbp, rsp
 finit
-fld qword [rbp+16]
+mov rdx, [rbp+16]
+fld qword [rdx]
 fabs
 sub rsp, 8
 fistp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+pop rdx
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
@@ -382,11 +400,16 @@ neg_float:
 push rbp
 mov rbp, rsp
 finit
-fld qword [rbp+16]
+mov rdx, [rbp+16]
+fld qword [rdx]
 fchs
 sub rsp, 8
 fistp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+pop rdx
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
@@ -395,11 +418,16 @@ cos:
 push rbp
 mov rbp, rsp
 finit
-fld qword [rbp+16]
+mov rdx, [rbp+16]
+fld qword [rdx]
 fcos
 sub rsp, 8
 fistp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+pop rdx
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
@@ -408,11 +436,16 @@ tan:
 push rbp
 mov rbp, rsp
 finit
-fld qword [rbp+16]
+mov rdx, [rbp+16]
+fld qword [rdx]
 fptan
 sub rsp, 8
 fistp qword [rsp]
-pop rax
+push 8
+call alloc
+add rsp, 8
+pop rdx
+mov [rax], rdx
 mov rsp, rbp
 pop rbp
 ret
@@ -523,7 +556,7 @@ ret
 
 greater_int:
 push rbp
-; mov rbp, rsp
+mov rbp, rsp
 mov rax, [rbp+16]
 mov rcx, [rax+8]
 mov rax, [rax]
@@ -564,13 +597,13 @@ eq_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fcomi
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+comisd xmm0, xmm1
 sete al
 movzx rax, al
-pop rax
 mov rsp, rbp
 pop rbp
 ret
@@ -579,13 +612,13 @@ less_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fcomi
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+comisd xmm0, xmm1
 setl al
 movzx rax, al
-pop rax
 mov rsp, rbp
 pop rbp
 ret
@@ -594,13 +627,13 @@ greater_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fcomi
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+comisd xmm0, xmm1
 setg al
 movzx rax, al
-pop rax
 mov rsp, rbp
 pop rbp
 ret
@@ -609,13 +642,13 @@ less_eq_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fcomi
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+comisd xmm0, xmm1
 setle al
 movzx rax, al
-pop rax
 mov rsp, rbp
 pop rbp
 ret
@@ -624,13 +657,13 @@ greater_eq_float:
 push rbp
 mov rbp, rsp
 mov rax, [rbp+16]
-finit
-fld qword [rax]
-fld qword [rax+8]
-fcomi
+mov rdx, [rax]
+movsd xmm0, [rdx]
+mov rdx, [rax+8]
+movsd xmm1, [rdx]
+comisd xmm0, xmm1
 setge al
 movzx rax, al
-pop rax
 mov rsp, rbp
 pop rbp
 ret

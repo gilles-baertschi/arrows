@@ -13,6 +13,7 @@ import Data.Maybe
 import Helpers
 import Parser.Primitives
 import Text.Megaparsec
+import Control.Monad
 
 data TranslationState = TranslationState {stateReferences :: [Type], stateText :: String, stateDefinitions :: [TranslatedDefinition], stateTextSection :: [String], stateDataSection :: [DataSection], stateLabelIndex :: Int, stateFunctionIndex :: Int}
 
@@ -32,13 +33,14 @@ translate = do
                   )
                 )
                 compilerDefinitions
-        (TranslationState _ _ _ textSection dataSection _ _) <- execStateT
+        (TranslationState _ _ defs textSection dataSection _ _) <- execStateT
             (translateDefinition "main" Nothing (ReferentialType (AliasReference "IO" [AliasReference "()" [], AliasReference "()" []]) []))
             (TranslationState [] "" compilerDefinitionsAsTranslated [] [] 0 0)
         let dataSectionText = "section .data\n" ++ unlines (zipWith dataSectionToText [0 ..] dataSection) ++ "\n"
         let start = "section .text\nglobal _start\n_start:\npush rbp\nmov rbp, rsp\ncall fun0\nmov rsp, rbp\npop rbp\nmov rax, 60\nxor rdi, rdi\nsyscall\n\n"
         let body = unlines textSection
         return $ dataSectionText ++ start ++ body ++ preludeAssembly
+        -- error $ unlines $ map (\x -> show (translatedName x) ++ " " ++ displayReferentialType (fromJust (translatedType x))) $ filter (isJust . translatedType) defs 
 
 translateDefinition :: Name -> Maybe Int -> ReferentialType -> ParserWithDoubleState TranslationState Program String
 translateDefinition name maybeIndex contextType = do
@@ -46,22 +48,33 @@ translateDefinition name maybeIndex contextType = do
     let definition = either id (!! fromMaybe 0 maybeIndex) eitherDefinitions
     maybeThisType <- maybe (return Nothing) (\index -> lift $ gets $ Just . instanceType . (!! index) . filter ((elem name) . map fst . instanceMembers) . instances) maybeIndex
     referentialType <- lift $ generalizeContext contextType (definitionType definition) maybeThisType
-    (mainTypeWithValue, mainTypeReferences):_ <- lift $ assertReferentialType referentialType $ definitionValue definition
-    namePreview <- fromMaybe "" <$> translateValuePreview mainTypeWithValue
-    backupReferences <- gets stateReferences
+    (maybeMainTypeWithValue, mainTypeReferences):_ <- lift $ assertReferentialType referentialType $ definitionValue definition
+    -- when (name == "show") $ error $ show (definitionValue definition)
     translationIndex <- gets $ length . stateDefinitions
-    modify $ \state ->
-        state
-            { stateReferences = mainTypeReferences
-              , stateDefinitions = stateDefinitions state ++ [TranslatedDefinition (Just name) maybeIndex (Just referentialType) namePreview]
-            }
-    asmName <- translateValue mainTypeWithValue
-    modify $ \state ->
-        state
-            { stateReferences = backupReferences
-              , stateDefinitions = replace translationIndex (TranslatedDefinition (Just name) maybeIndex (Just referentialType) asmName) (stateDefinitions state)
-            }
-    return asmName
+    case maybeMainTypeWithValue of
+        Nothing -> undefined
+            -- modify $ \state ->
+            --     state
+            --         { stateReferences = mainTypeReferences
+            --           , stateDefinitions = stateDefinitions state ++ [TranslatedDefinition (Just name) maybeIndex (Just referentialType) "id"]
+            --         }
+            -- return "id"
+            -- error $ show contextType
+        (Just mainTypeWithValue) -> do
+            namePreview <- fromMaybe "" <$> translateValuePreview mainTypeWithValue
+            backupReferences <- gets stateReferences
+            modify $ \state ->
+                state
+                    { stateReferences = mainTypeReferences
+                      , stateDefinitions = stateDefinitions state ++ [TranslatedDefinition (Just name) maybeIndex (Just referentialType) namePreview]
+                    }
+            asmName <- translateValue mainTypeWithValue
+            modify $ \state ->
+                state
+                    { stateReferences = backupReferences
+                      , stateDefinitions = replace translationIndex (TranslatedDefinition (Just name) maybeIndex (Just referentialType) asmName) (stateDefinitions state)
+                    }
+            return asmName
 
 generalizeContext :: ReferentialType -> ReferentialType -> Maybe ReferentialType -> ParserWithState Program ReferentialType
 generalizeContext (ReferentialType frame contextReferences) fromDefinition maybeThisType = uncurry ReferentialType <$> runStateT f contextReferences
@@ -97,15 +110,29 @@ translateAnonymousFunction action = do
 loadDefinition :: Type -> Name -> Maybe Int -> ParserWithDoubleState TranslationState Program String
 loadDefinition t name maybeIndex = do
     referentialType <- gets $ ReferentialType t . stateReferences
-    maybeTranslatedDefinition <-
-        gets $
-            find
-                ( \translatedDefinition ->
-                    (translatedName translatedDefinition == Just name)
-                        && (translatedIndex translatedDefinition == maybeIndex)
-                        && (maybe True (== referentialType) (translatedType translatedDefinition))
-                )
-                . stateDefinitions
+    existingDefinitions <- gets $ filter (\translatedDefinition -> (translatedName translatedDefinition == Just name) && (translatedIndex translatedDefinition == maybeIndex)) . stateDefinitions
+    -- maybeTranslatedDefinition <-
+    --     gets $
+    --         find
+    --             ( \translatedDefinition ->
+    --                 (translatedName translatedDefinition == Just name)
+    --                     && (translatedIndex translatedDefinition == maybeIndex)
+    --                     && (maybe True (== referentialType) (translatedType translatedDefinition))
+    --             )
+    --             . stateDefinitions
+    references <- gets stateReferences
+    maybeTranslatedDefinition <- join . find isJust <$> mapM (\translatedDefinition -> case translatedType translatedDefinition of
+            (Just referentialType) -> lift $ evalStateT ((do
+                    t' <- addReferentialType referentialType
+                    typeGreaterThan t t'
+                    return $ Just translatedDefinition
+                ) <|> (return Nothing)) references
+            Nothing -> return $ Just translatedDefinition
+        ) existingDefinitions
+    -- showTranslations <- gets $ filter ((== Just "show") . translatedName) . stateDefinitions
+    -- when (name == "show" && (not $ null showTranslations)) $ do
+    --     let x = translatedType $ head showTranslations
+    --     error $ show x
     case maybeTranslatedDefinition of
         Just (TranslatedDefinition _ _ _ asmName) -> return asmName
         Nothing -> translateDefinition name maybeIndex referentialType
@@ -140,6 +167,8 @@ translateValue (TypeWithDefinedValue t name) = loadDefinition t name Nothing
 translateValue (TypeWithDefinedValueFromInstance t name index) = loadDefinition t name (Just index)
 translateValue (TypeWithUnaryArrowOperator Arr _ value) = translateValue value
 translateValue (TypeWithUnaryArrowOperator ArrowConstant _ value) = translateAnonymousFunction $ translateValue value >>= returnValueInRax
+    -- | t == (AliasReference "Float" []) = translateAnonymousFunction $ translateValue value >>= returnValueInRax >> write "mov rax, [rax]\n"
+    -- | otherwise = translateAnonymousFunction $ translateValue value >>= returnValueInRax
 translateValue (TypeWithBinaryArrowOperator ArrowComposition _ x y) =
     translateAnonymousFunction
         ( do
@@ -216,6 +245,7 @@ translateValue (TypeWithBinaryArrowOperator TripleBar _ x y) =
             write $ doneLable ++ ":\n"
         )
 translateValue (TypeWithUndefined _ sourcePos) = write ("mov rax, 60\nmov rdi, " ++ show (unPos $ sourceLine sourcePos) ++ "\nsyscall\n") $> "0" -- TODO: throw error
+translateValue (TypeWithUntranslateable _) = return "id"
 
 translateValuePreview :: TypeWithValue -> ParserWithDoubleState TranslationState Program (Maybe String)
 translateValuePreview (TypeWithProductLiteral _ x y) = do
@@ -287,12 +317,10 @@ compilerDefinitions =
     , CompilerDefinition "add_float" (Just $ ReferentialType (AliasReference "Float" []) []) "+"
     , CompilerDefinition "sub_float" (Just $ ReferentialType (AliasReference "Float" []) []) "-"
     , CompilerDefinition "mul_float" (Just $ ReferentialType (AliasReference "Float" []) []) "*"
-    , CompilerDefinition "div_folat" (Just $ ReferentialType (AliasReference "Float" []) []) "/"
-    , CompilerDefinition "abs_folat" (Just $ ReferentialType (AliasReference "Float" []) []) "abs"
-    , CompilerDefinition "neg_folat" (Just $ ReferentialType (AliasReference "Float" []) []) "neg"
+    , CompilerDefinition "div_float" (Just $ ReferentialType (AliasReference "Float" []) []) "/"
+    , CompilerDefinition "abs_float" (Just $ ReferentialType (AliasReference "Float" []) []) "abs"
+    , CompilerDefinition "neg_float" (Just $ ReferentialType (AliasReference "Float" []) []) "neg"
     , CompilerDefinition "mod" Nothing "%"
-    , CompilerDefinition "cos" Nothing "cos"
-    , CompilerDefinition "tan" Nothing "tan"
     , CompilerDefinition "not" Nothing "not"
     , CompilerDefinition "and" Nothing "&&"
     , CompilerDefinition "or" Nothing "||"
@@ -309,14 +337,14 @@ compilerDefinitions =
     , CompilerDefinition "eq" (Just $ ReferentialType (AliasReference "Int" []) []) "=="
     , CompilerDefinition "less_int" (Just $ ReferentialType (AliasReference "Int" []) []) "<"
     , CompilerDefinition "greater_int" (Just $ ReferentialType (AliasReference "Int" []) []) ">"
-    , CompilerDefinition "less_equ_int" (Just $ ReferentialType (AliasReference "Int" []) []) "<="
-    , CompilerDefinition "greater_equ_int" (Just $ ReferentialType (AliasReference "Int" []) []) ">="
+    , CompilerDefinition "less_eq_int" (Just $ ReferentialType (AliasReference "Int" []) []) "<="
+    , CompilerDefinition "greater_eq_int" (Just $ ReferentialType (AliasReference "Int" []) []) ">="
     , CompilerDefinition "eq_float" (Just $ ReferentialType (AliasReference "Float" []) []) "=="
     , CompilerDefinition "less_float" (Just $ ReferentialType (AliasReference "Float" []) []) "<"
     , CompilerDefinition "greater_float" (Just $ ReferentialType (AliasReference "Float" []) []) ">"
-    , CompilerDefinition "less_equ_float" (Just $ ReferentialType (AliasReference "Float" []) []) "<="
-    , CompilerDefinition "greater_equ_float" (Just $ ReferentialType (AliasReference "Float" []) []) ">="
-    , CompilerDefinition "round_float_to_int" Nothing "roundToInt"
+    , CompilerDefinition "less_eq_float" (Just $ ReferentialType (AliasReference "Float" []) []) "<="
+    , CompilerDefinition "greater_eq_float" (Just $ ReferentialType (AliasReference "Float" []) []) ">="
+    , CompilerDefinition "float_to_int" Nothing "float2Int"
     , CompilerDefinition "first" (Just $ idArrowType 0) "first"
     , CompilerDefinition "second" (Just $ idArrowType 0) "second"
     , CompilerDefinition "composition" (Just $ idArrowType 0) ">>>"
