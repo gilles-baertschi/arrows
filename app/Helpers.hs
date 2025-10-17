@@ -11,61 +11,61 @@ getAlias name = gets $ head . filter ((name ==) . aliasName) . aliases
 
 getTypeFromName :: Name -> ParserWithState Program ReferentialType
 getTypeFromName name = do
-    fromDefinitions <- gets $ map definitionType . filter ((name ==) . definitionName) . definitions
-    fromClasses <- gets $ map snd . filter ((name ==) . fst) . typeClassMembers <=< typeClasses
-    return $ head $ fromDefinitions ++ fromClasses
+  fromDefinitions <- gets $ map definitionType . filter ((name ==) . definitionName) . definitions
+  fromClasses <- gets $ map snd . filter ((name ==) . fst) . typeClassMembers <=< typeClasses
+  return $ head $ fromDefinitions ++ fromClasses
 
 getTypesFromName :: Name -> ParserWithState Program (Either ReferentialType [ReferentialType])
 getTypesFromName name = do
-    fromDefinition <- gets $ fmap definitionType . find ((name ==) . definitionName) . definitions
-    maybeClass <- gets $ find ((name `elem`) . map fst . typeClassMembers) . typeClasses
-    fromInstances <- case maybeClass of
-        Just (TypeClass className _ _) -> do
-            instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
-            definitionsForName <- concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
-            return $ map definitionType definitionsForName
-        Nothing -> return []
-    return $ maybe (Right fromInstances) Left fromDefinition
+  fromDefinition <- gets $ fmap definitionType . find ((name ==) . definitionName) . definitions
+  maybeClass <- gets $ find ((name `elem`) . map fst . typeClassMembers) . typeClasses
+  fromInstances <- case maybeClass of
+    Just (TypeClass className _ _) -> do
+      instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
+      definitionsForName <- concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
+      return $ map definitionType definitionsForName
+    Nothing -> return []
+  return $ maybe (Right fromInstances) Left fromDefinition
 
 getDefinitionsFromName :: Name -> ParserWithState Program (Either Definition [Definition])
 getDefinitionsFromName name = do
-    fromDefinition <- gets $ find ((name ==) . definitionName) . definitions
-    maybeClass <- gets $ find ((name `elem`) . map fst . typeClassMembers) . typeClasses
-    fromInstances <- case maybeClass of
-        Just (TypeClass className _ _) -> do
-            instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
-            concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
-        Nothing -> return []
-    return $ maybe (Right fromInstances) Left fromDefinition
+  fromDefinition <- gets $ find ((name ==) . definitionName) . definitions
+  maybeClass <- gets $ find ((name `elem`) . map fst . typeClassMembers) . typeClasses
+  fromInstances <- case maybeClass of
+    Just (TypeClass className _ _) -> do
+      instancesOfClass <- gets $ filter ((== className) . instanceClassName) . instances
+      concatMap (filter ((name ==) . definitionName)) <$> mapM getDefinitionsFromInstance instancesOfClass
+    Nothing -> return []
+  return $ maybe (Right fromInstances) Left fromDefinition
 
 getInstances :: Name -> ParserWithState Program [Instance]
 getInstances name = gets $ filter ((name ==) . instanceClassName) . instances
 
 getIndeciesFromNameAndInstanceType :: Name -> ReferentialType -> ParserWithState Program [Int]
-getIndeciesFromNameAndInstanceType name referentialType = do 
-    instancesWithName <- gets $ filter (elem name . map fst . instanceMembers) . instances
-    return $ map fst $ filter ((== referentialType) . instanceType . snd) $ zip [0..] instancesWithName
+getIndeciesFromNameAndInstanceType name referentialType = do
+  instancesWithName <- gets $ filter (elem name . map fst . instanceMembers) . instances
+  return $ map fst $ filter ((== referentialType) . instanceType . snd) $ zip [0 ..] instancesWithName
 
 addTypeVariabel :: ParserWithDoubleState [Type] Program Type
 addTypeVariabel = do
-    newIndex <- gets length
-    modify (++ [AnyType newIndex []])
-    return $ TypeReference newIndex
+  newIndex <- gets length
+  modify (++ [AnyType newIndex []])
+  return $ TypeReference newIndex
 
 getOffsetFromValue :: Value -> ParsingOffset
 getOffsetFromValue value = case value of
-    (ProductLiteral offset _ _) -> offset
-    (SumLiteral offset _ _) -> offset
-    (BoolLiteral offset _) -> offset
-    (FloatLiteral offset _) -> offset
-    (IntLiteral offset _) -> offset
-    (CharLiteral offset _) -> offset
-    (EmptyTupleLiteral offset) -> offset
-    (DefinedValue (Name offset _)) -> offset
-    (DefinedValueFromInstance (Name offset _) _) -> offset
-    (UnaryArrowOperator _ offset _ _) -> offset
-    (BinaryArrowOperator _ offset _ _ _) -> offset
-    (Undefined offset _) -> offset
+  (ProductLiteral offset _ _) -> offset
+  (SumLiteral offset _ _) -> offset
+  (BoolLiteral offset _) -> offset
+  (FloatLiteral offset _) -> offset
+  (IntLiteral offset _) -> offset
+  (CharLiteral offset _) -> offset
+  (EmptyTupleLiteral offset) -> offset
+  (DefinedValue (Name offset _)) -> offset
+  (DefinedValueFromInstance (Name offset _) _) -> offset
+  (UnaryArrowOperator _ offset _ _) -> offset
+  (BinaryArrowOperator _ offset _ _ _) -> offset
+  (Undefined offset _) -> offset
 
 increaseReferences :: ReferentialType -> Int -> ReferentialType
 increaseReferences (ReferentialType t references) index = ReferentialType (increase t) (map increase references)
@@ -98,7 +98,7 @@ specifieClass (ReferentialType t references) thisClass = ReferentialType (specif
     specifie (Sum x y) = Sum (specifie x) (specifie y)
     specifie (AliasReference name arguments) = AliasReference name $ map specifie arguments
     specifie (AliasExtention offset arguments) = AliasExtention offset $ map specifie arguments
-    specifie ThisClass = mainType $ increasedThisClass
+    specifie ThisClass = mainType increasedThisClass
     specifie x = x
     increasedThisClass = increaseReferences thisClass (length references)
 
@@ -112,44 +112,44 @@ replace i x xs = before ++ [x] ++ after
   where
     (before, rest) = splitAt i xs
     after = case rest of
-        [] -> []
-        (_ : after') -> after'
+      [] -> []
+      (_ : after') -> after'
 
 displayReferentialType :: ReferentialType -> String
 displayReferentialType (ReferentialType t references) = evalState (display t) []
   where
-    display :: Type -> State [Int] String 
+    display :: Type -> State [Int] String
     display (Product x y) = do
-        xString <- display x
-        yString <- display y
-        return $ "(" ++ xString ++ ", " ++ yString ++ ")"
+      xString <- display x
+      yString <- display y
+      return $ "(" ++ xString ++ ", " ++ yString ++ ")"
     display (Sum x y) = do
-        xString <- display x
-        yString <- display y
-        return $ "(" ++ xString ++ " | " ++ yString ++ ")"
+      xString <- display x
+      yString <- display y
+      return $ "(" ++ xString ++ " | " ++ yString ++ ")"
     display (ForAllInstances _ classNames) = return $ "for all {" ++ intercalate ", " (map nameString classNames) ++ "}"
     display (AnyType _ classNames) = return $ "any {" ++ intercalate ", " (map nameString classNames) ++ "}"
     display (AliasReference name arguments) = case name of
-        "Id" -> do
-            inputString <- display (head arguments)
-            outputString <- display (arguments !! 1)
-            return $ inputString ++ " -> " ++ outputString
-        _ -> unwords . (nameString name :) <$> mapM display arguments
+      "Id" -> do
+        inputString <- display (head arguments)
+        outputString <- display (arguments !! 1)
+        return $ inputString ++ " -> " ++ outputString
+      _ -> unwords . (nameString name :) <$> mapM display arguments
     display (AliasExtention index extendedArguments) = case references !! index of
-        (AliasReference name coreArguments) -> display $ AliasReference name $ coreArguments ++ extendedArguments
-        _ -> undefined
+      (AliasReference name coreArguments) -> display $ AliasReference name $ coreArguments ++ extendedArguments
+      _ -> undefined
     display (TypeReference index) = case references !! index of
-        (ForAllInstances _ _) -> getName index
-        (AnyType _ _) -> getName index
-        x -> display x
+      (ForAllInstances _ _) -> getName index
+      (AnyType _ _) -> getName index
+      x -> display x
     display ThisClass = return "this"
     getName :: Int -> State [Int] String
     getName indexInReferences = do
-        indecies <- get
-        let maybeIndex = elemIndex indexInReferences indecies
-        ("a" ++) . show <$> case maybeIndex of
-            Nothing -> modify (++ [indexInReferences]) >> return (length indecies)
-            (Just indexInNames) -> return indexInNames
+      indecies <- get
+      let maybeIndex = elemIndex indexInReferences indecies
+      ("a" ++) . show <$> case maybeIndex of
+        Nothing -> modify (++ [indexInReferences]) >> return (length indecies)
+        (Just indexInNames) -> return indexInNames
 
 displayValue :: Value -> String
 displayValue (ProductLiteral _ x y) = "(" ++ displayValue x ++ ", " ++ displayValue y ++ ")"
@@ -160,22 +160,22 @@ displayValue (FloatLiteral _ x) = show x
 displayValue (CharLiteral _ x) = show x
 displayValue (EmptyTupleLiteral _) = "()"
 displayValue (DefinedValue name) = nameString name
-displayValue (DefinedValueFromInstance name (Left index)) = nameString name
-displayValue (DefinedValueFromInstance name (Right referentialType)) = nameString name
+displayValue (DefinedValueFromInstance name (Left _)) = nameString name
+displayValue (DefinedValueFromInstance name (Right _)) = nameString name
 displayValue (Undefined _ _) = "undefined"
 displayValue (UnaryArrowOperator operator _ Nothing x) = show operator ++ " (" ++ displayValue x ++ ")"
-displayValue (UnaryArrowOperator operator _ (Just referentialType) x) = show operator ++ " (" ++ displayValue x ++ ")"
+displayValue (UnaryArrowOperator operator _ (Just _) x) = show operator ++ " (" ++ displayValue x ++ ")"
 displayValue (BinaryArrowOperator operator _ Nothing x y) = "(" ++ displayValue x ++ ") " ++ show operator ++ " (" ++ displayValue y ++ ")"
-displayValue (BinaryArrowOperator operator _ (Just referentialType) x y) = "(" ++ displayValue x ++ " " ++ show operator ++ " " ++ displayValue y ++ ")"
+displayValue (BinaryArrowOperator operator _ (Just _) x y) = "(" ++ displayValue x ++ " " ++ show operator ++ " " ++ displayValue y ++ ")"
 
 getDefinitionsFromInstance :: Instance -> ParserWithState Program [Definition]
 getDefinitionsFromInstance (Instance insertedType className members) = do
-    (TypeClass _ _ classMembers) <- gets $ head . filter ((className ==) . typeClassName) . typeClasses
-    mapM
-        ( \((name, referentialType), value) -> do
-            return $ Definition name (specifieClass referentialType insertedType) value
-        )
-        $ zip (sortOn fst classMembers) (map snd $ sortOn fst members)
+  (TypeClass _ _ classMembers) <- gets $ head . filter ((className ==) . typeClassName) . typeClasses
+  mapM
+    ( \((name, referentialType), value) -> do
+        return $ Definition name (specifieClass referentialType insertedType) value
+    )
+    $ zip (sortOn fst classMembers) (map snd $ sortOn fst members)
 
 addTypeToValue :: Type -> Value -> TypeWithValue
 addTypeToValue t (BoolLiteral _ x) = TypeWithBoolLiteral t x
@@ -192,22 +192,23 @@ addTypeToValue _ _ = undefined
 
 getTypeFromTypeWithValue :: TypeWithValue -> Type
 getTypeFromTypeWithValue typeWithValue = case typeWithValue of
-    (TypeWithProductLiteral t _ _) -> t
-    (TypeWithSumLiteral t _ _) -> t
-    (TypeWithBoolLiteral t _) -> t
-    (TypeWithIntLiteral t _) -> t
-    (TypeWithFloatLiteral t _) -> t
-    (TypeWithCharLiteral t _) -> t
-    (TypeWithEmptyTupleLiteral t) -> t
-    (TypeWithDefinedValue t _) -> t
-    (TypeWithDefinedValueFromInstance t _ _) -> t
-    (TypeWithUndefined t _) -> t
-    (TypeWithUnaryArrowOperator _ t _) -> t
-    (TypeWithBinaryArrowOperator _ t _ _) -> t
+  (TypeWithProductLiteral t _ _) -> t
+  (TypeWithSumLiteral t _ _) -> t
+  (TypeWithBoolLiteral t _) -> t
+  (TypeWithIntLiteral t _) -> t
+  (TypeWithFloatLiteral t _) -> t
+  (TypeWithCharLiteral t _) -> t
+  (TypeWithEmptyTupleLiteral t) -> t
+  (TypeWithDefinedValue t _) -> t
+  (TypeWithDefinedValueFromInstance t _ _) -> t
+  (TypeWithUndefined t _) -> t
+  (TypeWithUnaryArrowOperator _ t _) -> t
+  (TypeWithBinaryArrowOperator _ t _ _) -> t
+  (TypeWithUntranslateable t) -> t
 
 idArrowType :: ParsingOffset -> ReferentialType
 idArrowType offset = ReferentialType (AliasReference (Name offset "Id") []) []
 
 isIdArrow :: ReferentialType -> Bool
-isIdArrow (ReferentialType (AliasReference (Name _ "Id") []) []) = True 
+isIdArrow (ReferentialType (AliasReference (Name _ "Id") []) []) = True
 isIdArrow _ = False

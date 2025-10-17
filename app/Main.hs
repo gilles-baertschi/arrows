@@ -2,72 +2,79 @@
 
 module Main where
 
-import System.Console.GetOpt
+import Ast
 import Checker.Names
 import Checker.Types
+import Control.Monad
+import Control.Monad.State
 import Data.FileEmbed (embedStringFile)
-import Data.Text (replace, unpack, pack)
-import Parser.Primitives
-import Parser.Program
-import Parser.Types
-import System.Process
-import Translator
-import Text.Megaparsec
 import Data.List
 import Data.List.Split
-import System.IO
-import System.Process
+import Data.Text (Text, pack, replace, unpack)
+import Data.Void
+import Parser.Primitives
+import Parser.Program
+import System.Console.GetOpt
 import System.Environment
 import System.Exit
-import Control.Monad
+import System.IO
+import System.Process
+import Text.Megaparsec
+import Translator
 
 usage :: String -> String
-usage name = unpack $ replace "kpyc" (pack name) $ pack $(embedStringFile "usage.txt")
+usage name = unpack $ replace "pirat" (pack name) $ pack $(embedStringFile "usage.txt")
 
-data Options = Options { optExecute :: Bool, optDebug :: Bool, optOutput :: String }
+data Options = Options {optExecute :: Bool, optDebug :: Bool, optOutput :: String}
 
 defaultOptions :: Options
-defaultOptions = Options { optExecute = False, optDebug = False, optOutput = "" }
+defaultOptions = Options {optExecute = False, optDebug = False, optOutput = ""}
 
 options :: [OptDescr (Options -> IO Options)]
 options =
-    [ Option "o" ["output"] (ReqArg (\arg opt -> return opt { optOutput = arg }) "FILE") "Specify the name of the final executable"
-    , Option "e" ["execute"] (NoArg (\opt -> return opt { optExecute = True })) "Execute after compilation"
-    , Option "d" ["debug"] (NoArg (\opt -> return opt { optDebug = True })) "Add debug symbols"
-    , Option "h" ["help"] (NoArg (\_ -> do name <- getProgName; hPutStrLn stderr $ usage name; exitSuccess)) "Show help"
-    ]
+  [ Option "o" ["output"] (ReqArg (\arg opt -> return opt {optOutput = arg}) "FILE") "Specify the name of the final executable",
+    Option "e" ["execute"] (NoArg (\opt -> return opt {optExecute = True})) "Execute after compilation",
+    Option "d" ["debug"] (NoArg (\opt -> return opt {optDebug = True})) "Add debug symbols",
+    Option "h" ["help"] (NoArg (\_ -> do name <- getProgName; hPutStrLn stderr $ usage name; exitSuccess)) "Show help"
+  ]
 
 main :: IO ()
 main = do
-    args <- getArgs
-    let (actions, nonOptions, _) = getOpt Permute options args
-    Options { optExecute = execute, optOutput = output, optDebug = debug } <- foldl (>>=) (return defaultOptions) actions
-    codeFileName <- case nonOptions of
-        [filePath] -> return filePath
-        _ -> do
-            hPutStrLn stderr $ "Error: A single file argument is required. " ++ show nonOptions
-            exitFailure
-    let outputFileName = if output == "" then intercalate "." . init $ splitOn "." codeFileName else output
-    code <- readFile codeFileName
-    success <- compile debug code codeFileName outputFileName
-    when (execute && success) $ callProcess ("./" ++ outputFileName) []
+  args <- getArgs
+  let (actions, nonOptions, _) = getOpt Permute options args
+  Options {optExecute = execute, optOutput = output, optDebug = debug} <- foldl (>>=) (return defaultOptions) actions
+  codeFileName <- case nonOptions of
+    [filePath] -> return filePath
+    _ -> do
+      hPutStrLn stderr $ "Error: A single file argument is required. " ++ show nonOptions
+      exitFailure
+  let outputFileName = if output == "" then intercalate "." . init $ splitOn "." codeFileName else output
+  code <- readFile codeFileName
+  success <- compileAssembleLinkRun debug code codeFileName outputFileName
+  when (execute && success) $ callProcess ("./" ++ outputFileName) []
 
 run :: IO ()
 run = withArgs ["test.txt", "-ed"] main
 
-compile :: Bool -> String -> String -> String -> IO Bool
-compile debug code codeFileName outputFileName = do
-    let result = runParser programP codeFileName $ pack $ code ++ prelude
-    case result of
-        Left parserErrorBundel -> do 
-            putStrLn $ errorBundlePretty parserErrorBundel 
-            return False
-        Right program -> do
-            writeFile (outputFileName ++ ".asm") program
-            let nasmArgs = if debug then ["-f", "elf64", "-F", "dwarf", outputFileName ++ ".asm"] else ["-f", "elf64", outputFileName ++ ".asm"]
-            callProcess "nasm" nasmArgs
-            callProcess "ld" [outputFileName ++ ".o", "-o", outputFileName]
-            return True
+compileAssembleLinkRun :: Bool -> String -> String -> String -> IO Bool
+compileAssembleLinkRun debug code codeFileName outputFileName = do
+  let result = compile codeFileName $ pack $ code ++ prelude
+  case result of
+    Left parserErrorBundel -> do
+      putStrLn $ errorBundlePretty parserErrorBundel
+      return False
+    Right program -> do
+      writeFile (outputFileName ++ ".asm") program
+      let nasmArgs = if debug then ["-f", "elf64", "-F", "dwarf", outputFileName ++ ".asm"] else ["-f", "elf64", outputFileName ++ ".asm"]
+      callProcess "nasm" nasmArgs
+      callProcess "ld" [outputFileName ++ ".o", "-o", outputFileName]
+      return True
+
+compile :: String -> Text -> Either (ParseErrorBundle Text Void) String
+compile = runParser $ programP >>= evalStateT (checkAll >> translate)
+
+checkAll :: ParserWithState Program ()
+checkAll = checkNameSafety >> checkTypeSafety
 
 prelude :: String
 prelude = $(embedStringFile "app/Prelude/Prelude.txt")

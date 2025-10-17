@@ -133,6 +133,14 @@ instance Eq () where
     (==) = const True
     (/=) = const False
 
+instance (Eq a, Eq b) => Eq (a, b) where
+    (==) = (fst ***[Id] fst >>>[Id] (==)) &&& (snd ***[Id] snd >>>[Id] (==)) >>> (&&) 
+    (/=) = (==) >>> not
+
+instance (Eq a, Eq b) => Eq (a | b) where
+    (==) = includeLeft >>>[Id] (includeRight >>>[Id] (==) |||[Id] (const[Id] False)) |||[Id] (includeRight >>>[Id] (const[Id] False) |||[Id] (==)) 
+    (/=) = (==) >>> not
+
 instance Ord Int where
    (>) = undefined
    (>=) = undefined

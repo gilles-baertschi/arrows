@@ -1,6 +1,6 @@
-Usage: arrows [OPTIONS] [FILE]
+Usage: pirat [OPTIONS] [FILE]
 
-A compiler for the Arrows programing language.
+A compiler for the Pirat programing language.
 
 Options:
     -h, --help              Show help message and exit
@@ -12,4 +12,4 @@ Arguments:
     [FILE]                  File with the source-code
 
 Examples:
-    arrows -o out in.arr    Compile in.arr and generate executable named out
+    pirat -o out in.arr     Compile in.arr and generate executable named out

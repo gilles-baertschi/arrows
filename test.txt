@@ -4,7 +4,8 @@ main = arr test >>> print >>> const '\n' >>> putChar
 -- main = const (l (r (8, 5))) >>> arr show >>> print
 
 test :: () -> String 
-test = const ((), (initial, (0, rules))) >>> execMachine >>>[Id] snd >>>[Id] show[Machine]
+-- test = const ((), (initial, (0, rules))) >>> execMachine >>>[Id] snd >>>[Id] show[Machine]
+test = const ((r 2, True), (r 5, True)) >>> (==) >>> show
 
 -- answer :: IO Bool ()
 -- answer = arr boolToChoice >>> const "zu jung" ||| const "alt genug" >>> print
