@@ -1,0 +1,11 @@
+main :: IO () ()
+main = ask >>> arr offAge >>> answer >>> const '\n' >>> putChar
+
+ask :: IO () String
+ask = const "Wie alt bist du? " >>> print >>> readLine
+
+offAge :: String -> Bool
+offAge = read >>> double >>> second (const 18) >>> (>=)
+
+answer :: IO Bool ()
+answer = arr boolToChoice >>> const "zu jung" ||| const "alt genug" >>> print
