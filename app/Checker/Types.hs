@@ -19,8 +19,15 @@ type TranslationResult = (Maybe TypeWithValue, [Type])
 
 checkTypeSafety :: ParserWithState Program ()
 checkTypeSafety = do
-  gets instances >>= mapM_ (getDefinitionsFromInstance >=> mapM_ checkDefinition)
-  gets definitions >>= mapM_ checkDefinition
+  gets definitions >>= mapM_ (register . checkDefinition)
+  gets instances >>= mapM_ (getDefinitionsFromInstance >=> mapM_ (register . checkDefinition))
+
+register :: ParserWithState Program a -> ParserWithState Program ()
+register p = do
+  result <- observing p
+  case result of
+    Left e -> registerParseError e
+    _ -> return ()
 
 -- error $ "123"
 
