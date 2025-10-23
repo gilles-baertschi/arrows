@@ -8,7 +8,11 @@ This project is part of my Matura thesis.
 
 ## Installation
 
-There is a binary a /build/pirat directory.
+There is a binary at /build/pirat directory.
 
 If you want to compile the project yourself, you need to install __ghc__ and __cabal__. The recommended way to do so, is by using [__ghcup__](https://www.haskell.org/ghcup/). Then just go to the directory with the cloned git repository and run:
-> cabal build
+>cabal build
+
+## Example Programs
+The files test.txt, ask.txt and turing.txt are example programs. They can be compiled with:
+>pirat test.txt
