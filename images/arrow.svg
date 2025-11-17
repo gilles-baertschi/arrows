@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg
    width="117.64062pt"
-   height="25.675812pt"
-   viewBox="0 0 117.64062 25.675812"
+   height="49.804688pt"
+   viewBox="0 0 117.64062 49.804688"
    version="1.1"
-   id="svg13"
+   id="svg14"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg">
@@ -136,5 +136,22 @@
        x="214.955"
        y="141.306"
        id="use13" />
+  </g>
+  <path
+     fill-rule="nonzero"
+     fill="#f3f3f3"
+     fill-opacity="1"
+     d="m 5e-6,49.804691 h 5.23046 V 39.703121 H 5e-6 Z m 0,0"
+     id="path14" />
+  <g
+     fill="#000000"
+     fill-opacity="1"
+     id="g14"
+     transform="translate(-125.79687,-133.41797)">
+    <use
+       xlink:href="#glyph-0-0"
+       x="125.798"
+       y="181.007"
+       id="use14" />
   </g>
 </svg>

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg
    width="231.02734pt"
-   height="54.023468pt"
-   viewBox="0 0 231.02734 54.023468"
+   height="78.148438pt"
+   viewBox="0 0 231.02734 78.148438"
    version="1.1"
-   id="svg46"
+   id="svg53"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg">
@@ -441,5 +441,58 @@
        x="336.80981"
        y="141.306"
        id="use46" />
+  </g>
+  <path
+     fill-rule="nonzero"
+     fill="#f3f3f3"
+     fill-opacity="1"
+     d="m 5e-6,78.148441 h 41.84374 V 68.050781 H 5e-6 Z m 0,0"
+     id="path46" />
+  <g
+     fill="#000000"
+     fill-opacity="1"
+     id="g52"
+     transform="translate(-125.79687,-133.41797)">
+    <use
+       xlink:href="#glyph-0-0"
+       x="125.798"
+       y="209.354"
+       id="use47" />
+    <use
+       xlink:href="#glyph-0-1"
+       x="131.02837"
+       y="209.354"
+       id="use48" />
+    <use
+       xlink:href="#glyph-0-2"
+       x="136.25873"
+       y="209.354"
+       id="use49" />
+    <use
+       xlink:href="#glyph-0-3"
+       x="141.48909"
+       y="209.354"
+       id="use50" />
+    <use
+       xlink:href="#glyph-0-4"
+       x="146.71947"
+       y="209.354"
+       id="use51" />
+    <use
+       xlink:href="#glyph-0-5"
+       x="151.94983"
+       y="209.354"
+       id="use52" />
+  </g>
+  <g
+     fill="#000000"
+     fill-opacity="1"
+     id="g53"
+     transform="translate(-125.79687,-133.41797)">
+    <use
+       xlink:href="#glyph-0-6"
+       x="162.41055"
+       y="209.354"
+       id="use53" />
   </g>
 </svg>
