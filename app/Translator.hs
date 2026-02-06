@@ -15,7 +15,7 @@ import Helpers
 import Parser.Primitives
 import Text.Megaparsec
 
-data TranslationState = TranslationState {stateReferences :: [Type], stateText :: String, stateDefinitions :: [TranslatedDefinition], stateTextSection :: [String], stateDataSection :: [DataSection], stateLabelIndex :: Int, stateFunctionIndex :: Int}
+data TranslationState = TranslationState {stateReferences :: [Type], stateText :: String, stateDefinitions :: [TranslatedDefinition], stateTextSection :: [String], stateDataSection :: [(Int, DataSection)], stateLabelIndex :: Int, stateFunctionIndex :: Int, stateDataIndex :: Int}
 
 data DataSection = FloatData Double | StringData String | ProductData String String | SumData Bool String
   deriving (Show, Eq)
@@ -32,11 +32,11 @@ translate = do
           Nothing -> return $ TranslatedDefinition (Just name) Nothing Nothing asmName
       )
       compilerDefinitions
-  (mainAsmName, TranslationState _ _ _ textSection dataSection _ _) <-
+  (mainAsmName, TranslationState _ _ _ textSection dataSection _ _ _) <-
     runStateT
       (loadDefinition (AliasReference "IO" [AliasReference "()" [], AliasReference "()" []]) "main" Nothing)
-      (TranslationState [] "" compilerDefinitionsAsTranslated [] [] 0 0)
-  let dataSectionText = "section .data\n" ++ unlines (zipWith dataSectionToText [0 ..] dataSection) ++ "\n"
+      (TranslationState [] "" compilerDefinitionsAsTranslated [] [] 0 0 0)
+  let dataSectionText = "section .data\n" ++ unlines (map (uncurry dataSectionToText) dataSection) ++ "\n"
   let start = "section .text\nglobal _start\n_start:\npush rbp\nmov rbp, rsp\ncall " ++ mainAsmName ++ "\nmov rsp, rbp\npop rbp\nmov rax, 60\nxor rdi, rdi\nsyscall\n\n"
   let body = unlines textSection
   return $ dataSectionText ++ start ++ body ++ preludeAssembly
@@ -167,14 +167,16 @@ translateValue (TypeWithCharLiteral _ value) = return $ show (ord value)
 translateValue (TypeWithBoolLiteral _ value) = return $ if value then "1" else "0"
 translateValue (TypeWithEmptyTupleLiteral _) = return "0"
 translateValue (TypeWithFloatLiteral _ value) = do
-  addDataSection $ FloatData value
+  addDataSection $ return $ FloatData value
 translateValue (TypeWithProductLiteral _ x y) = do
-  xName <- translateValue x
-  yName <- translateValue y
-  addDataSection $ ProductData xName yName
+  addDataSection (do
+    xName <- translateValue x
+    yName <- translateValue y
+    return $ ProductData xName yName)
 translateValue (TypeWithSumLiteral _ boolChoice value) = do
-  innerName <- translateValue value
-  addDataSection $ SumData boolChoice innerName
+  addDataSection (do
+    innerName <- translateValue value
+    return $ SumData boolChoice innerName)
 translateValue (TypeWithDefinedValue t name) = loadDefinition t name Nothing
 translateValue (TypeWithDefinedValueFromInstance t name index) = loadDefinition t name (Just index)
 translateValue (TypeWithUnaryArrowOperator Arr _ value) = translateValue value
@@ -276,22 +278,24 @@ translateValuePreview _ = return Nothing
 write :: String -> ParserWithDoubleState TranslationState Program ()
 write newText = modify $ \state -> state {stateText = stateText state ++ newText}
 
-addDataSection :: DataSection -> ParserWithDoubleState TranslationState Program String
-addDataSection value = do
-  maybeIndex <- gets $ fmap fst . find ((== value) . snd) . zip [0 ..] . stateDataSection
+addDataSection :: ParserWithDoubleState TranslationState Program DataSection -> ParserWithDoubleState TranslationState Program String
+addDataSection f = do
+  index <- gets stateDataIndex
+  modify $ \state -> state {stateDataIndex = index + 1}
+  value <- f
+  maybeIndex <- gets $ fmap fst . find ((== value) . snd) . stateDataSection
   createConstantName <$> case maybeIndex of
     (Just i) -> return i
     Nothing -> do
-      index <- gets $ length . stateDataSection
-      modify $ \state -> state {stateDataSection = stateDataSection state ++ [value]}
+      modify $ \state -> state {stateDataSection = stateDataSection state ++ [(index, value)]}
       return index
 
 addDataSectionPreview :: Maybe DataSection -> ParserWithDoubleState TranslationState Program String
 addDataSectionPreview value = do
-  maybeIndex <- gets $ fmap fst . find ((== value) . Just . snd) . zip [0 ..] . stateDataSection
+  maybeIndex <- gets $ fmap fst . find ((== value) . Just . snd) . stateDataSection
   createConstantName <$> case maybeIndex of
     (Just i) -> return i
-    Nothing -> gets $ length . stateDataSection
+    Nothing -> gets stateDataIndex
 
 endFunction :: String -> ParserWithDoubleState TranslationState Program ()
 endFunction name = do
