@@ -10,6 +10,7 @@ type Char = undefined
 type List a = (() | (a, List a)) 
 type String = List Char
 type State s a b = (a, s) -> (b, s)
+type Maybe a b = (() | a) -> (() | b)
 
 class Arrow y where
     id :: y a a
@@ -112,6 +113,21 @@ instance Choice (State s) where
     (+++) = left[State s] *** right[State s] >>> (>>>)[Id]
     -- (y a c, y b c) -> y (a | b) c
     (|||) = (+++)[State s] >>> double >>> second (const resolveChoice >>> arr) >>> (>>>)[Id]
+
+instance Arrow Maybe where
+    id = id[Id]
+    arr = right
+    (>>>) = (>>>)[Id]
+    first = first[Id] >>> right[Id] >>> double >>> first[Id] (const[Id] (right (first r))) >>> (>>>)[Id] >>> double >>> second[Id] (const[Id] (l |||[Id] (includeRight >>> left fst))) >>> (>>>)[Id]
+    second = second[Id] >>> right[Id] >>> double >>> first[Id] (const[Id] (right (second r))) >>> (>>>)[Id] >>> double >>> second[Id] (const[Id] (l |||[Id] (includeLeft >>> left snd))) >>> (>>>)[Id]
+    (***) = first[Maybe] *** second[Maybe] >>> (>>>)[Id]
+    (&&&) = (***)[Maybe] >>> double >>> first (const double >>> arr[Maybe]) >>> (>>>)[Maybe] 
+
+instance Choice Maybe where
+    left = left[Id] >>> double >>> first (const reorderToFrontChoice) >>> (>>>)[Id] >>> double >>> second (const reorderToBackChoice) >>> (>>>)[Id]
+    right = left[Maybe] >>> double >>> first (const swapChoice >>> arr) >>> (>>>)[Id] >>> double >>> second (const swapChoice >>> arr) >>> (>>>)[Id]
+    (+++) = left[Maybe] *** right[Maybe] >>> (>>>)[Id]
+    (|||) = (+++)[Maybe] >>> double >>> second (const resolveChoice >>> arr) >>> (>>>)[Id]
 
 instance Eq Bool where
     (==) = undefined
@@ -243,6 +259,12 @@ reorderToFront = undefined
 
 reorderToBack :: ((a, b), c) -> (a, (b, c))
 reorderToBack = undefined
+
+reorderToBackChoice :: ((a | b) | c) -> (a | (b | c))
+reorderToBackChoice = (l ||| (l >>> r)) ||| (r >>> r)
+
+reorderToFrontChoice :: (a | (b | c)) -> ((a | b) | c)
+reorderToFrontChoice = (l >>> l) ||| ((r >>> l) ||| r)
 
 double :: a -> (a, a)
 double = undefined

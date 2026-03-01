@@ -137,7 +137,7 @@ displayReferentialType (ReferentialType t references) = evalState (display t) []
       _ -> unwords . (nameString name :) <$> mapM display arguments
     display (AliasExtention index extendedArguments) = case references !! index of
       (AliasReference name coreArguments) -> display $ AliasReference name $ coreArguments ++ extendedArguments
-      _ -> undefined
+      _ -> return "" 
     display (TypeReference index) = case references !! index of
       (ForAllInstances _ _) -> getName index
       (AnyType _ _) -> getName index

@@ -254,7 +254,7 @@ mov rbp, rsp
 mov rax, [rbp+16]
 mov rcx, [rax+8]
 mov rax, [rax]
-xor edx, edx
+cqo
 idiv rcx
 mov rsp, rbp
 pop rbp

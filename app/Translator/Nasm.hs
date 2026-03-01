@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Translator where
+module Translator.Nasm where
 
 import Ast
 import Checker.Types
@@ -371,6 +371,7 @@ compilerDefinitions =
     CompilerDefinition "triple_and" (Just $ idArrowType 0) "&&&",
     CompilerDefinition "triple_plus" (Just $ idArrowType 0) "+++",
     CompilerDefinition "triple_bar" (Just $ idArrowType 0) "|||",
+    CompilerDefinition "app" (Just $ ReferentialType (AliasReference (Name 0 "IO") []) []) "app",
     CompilerDefinition "first" (Just $ ReferentialType (AliasReference (Name 0 "IO") []) []) "first",
     CompilerDefinition "second" (Just $ ReferentialType (AliasReference (Name 0 "IO") []) []) "second",
     CompilerDefinition "composition" (Just $ ReferentialType (AliasReference (Name 0 "IO") []) []) ">>>",
