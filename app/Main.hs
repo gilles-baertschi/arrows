@@ -36,8 +36,9 @@ options =
   [ Option "o" ["output"] (ReqArg (\arg opt -> return opt {optOutput = arg}) "FILE") "Specify the name of the final executable",
     Option "e" ["execute"] (NoArg (\opt -> return opt {optExecute = True})) "Execute after compilation",
     Option "d" ["debug"] (NoArg (\opt -> return opt {optDebug = True})) "Add debug symbols",
-    Option "h" ["help"] (NoArg (\_ -> do name <- getProgName; hPutStrLn stderr $ usage name; exitSuccess)) "Show help",
-    Option "l" ["llvm"] (NoArg (\opt -> return opt {optLLVM = True})) "Use LLVM"
+    Option "h" ["help"] (NoArg (\_ -> do name <- getProgName; hPutStrLn stderr $ usage name; exitSuccess)) "Show help message and exit",
+    Option "l" ["llvm"] (NoArg (\opt -> return opt {optLLVM = True})) "Use the LLVM blackend",
+    Option "a" ["ast"] (NoArg (\opt -> return opt {optLLVM = True})) "Output the abstract syntax tree"
   ]
 
 main :: IO ()
@@ -48,7 +49,7 @@ main = do
   codeFileName <- case nonOptions of
     [filePath] -> return filePath
     _ -> do
-      hPutStrLn stderr $ "Error: A single file argument is required. " ++ show nonOptions
+      hPutStrLn stderr "Error: A single file argument is required."
       exitFailure
   let outputFileName = if output == "" then intercalate "." . init $ splitOn "." codeFileName else output
   code <- readFile codeFileName
@@ -65,8 +66,9 @@ compileAssembleLinkRun False debug code codeFileName outputFileName = do
     Left parserErrorBundel -> do
       putStrLn $ errorBundlePretty parserErrorBundel
       return False
-    Right program -> do
+    Right (program, ast) -> do
       writeFile (outputFileName ++ ".asm") program
+      writeFile (outputFileName ++ ".ast") ast
       let nasmArgs = if debug then ["-f", "elf64", "-F", "dwarf", outputFileName ++ ".asm"] else ["-f", "elf64", outputFileName ++ ".asm"]
       callProcess "nasm" nasmArgs
       callProcess "ld" [outputFileName ++ ".o", "-o", outputFileName]
@@ -77,16 +79,23 @@ compileAssembleLinkRun True debug code codeFileName outputFileName = do
     Left parserErrorBundel -> do
       putStrLn $ errorBundlePretty parserErrorBundel
       return False
-    Right program -> do
+    Right (program, ast) -> do
       writeFile (outputFileName ++ ".ll") program
+      writeFile (outputFileName ++ ".ast") ast
       callProcess "clang" [outputFileName ++ ".ll", "-o", outputFileName]
       return True
 
-compileLlvm :: String -> Text -> Either (ParseErrorBundle Text Void) String
-compileLlvm = runParser $ programP >>= evalStateT (checkAll >> Llvm.translate)
+compileLlvm :: String -> Text -> Either (ParseErrorBundle Text Void) (String, String)
+compileLlvm = runParser $ do 
+    ast <- programP 
+    result <- evalStateT (checkAll >> Llvm.translate) ast
+    return (result, show ast)
 
-compileNasm :: String -> Text -> Either (ParseErrorBundle Text Void) String
-compileNasm = runParser $ programP >>= evalStateT (checkAll >> Nasm.translate)
+compileNasm :: String -> Text -> Either (ParseErrorBundle Text Void) (String, String)
+compileNasm = runParser $ do 
+    ast <- programP 
+    result <- evalStateT (checkAll >> Nasm.translate) ast
+    return (result, show ast)
 
 checkAll :: ParserWithState Program ()
 checkAll = checkNameSafety >> checkTypeSafety

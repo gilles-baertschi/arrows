@@ -1,4 +1,85 @@
 main :: IO () ()
-main = const "Hello World" >>> print
+-- main = const ((inc, dec), 67) >>> arr (first (&&&) >>> app >>> fst >>> show[Int]) >>> print
+-- main = const ((inc, dec), r 6) >>> arr (first (|||) >>> app >>> show) >>> print
+main = const (5.29, 5.29) >>> arr ((>) >>> show) >>> print
 
+f :: Char -> Char 
+-- f = const 35 >>> double >>> (+) >>> chr
+f = ord &&& (const 1) >>> (+) >>> chr
 
+-- main = const ('A', "ABCDEF") >>> arr (charP >>> snd) >>> print >>> const '\n' >>> putChar
+-- main = const (r (r (), 3)) >>> arr (g >>> show) >>> print
+-- main = const () >>> arr h >>> print
+-- main = const (r ((78, 7), 345)) >>> arr (first[Maybe] div) >>> arr show >>> print
+-- main = const (r (-4)) >>> arr (calc >>> show) >>> print
+-- main = const (r (-2)) >>> arr (calc >>> show) >>> print
+
+h :: () -> String
+-- h = const (right inc) >>> first[Id] >>> right[Id] >>> double >>> first[Id] (const[Id] (right (first r))) >>> (>>>)[Id] >>> double >>> second[Id] (const[Id] g) >>> (>>>)[Id] >>> double >>> second (const (l (2, 6))) >>> app >>> show
+h = const[Id] (fail) >>> first[Maybe] >>> double >>> second (const (r (2, 6))) >>> app >>> show
+
+fail :: Maybe a b
+fail = const[Id] (l ())
+
+k :: (Int, Int) -> ((Int, Int) | (Int, Int))
+k = double >>> first (first (const 0) >>> (==)) >>> choice
+
+div :: Maybe (Int, Int) Int
+div = arr[Maybe] (double >>> first (first (const 0) >>> (==)) >>> choice) >>> left[Maybe] (arr (/)) >>> right[Maybe] fail >>> arr[Maybe] fromLeft
+-- div = arr[Maybe] (double >>> first (first (const 0) >>> (==)) >>> choice)
+
+calc :: Maybe Int Int
+calc = arr prepare >>> first div >>> div
+
+calc2 :: Int -> Int
+calc2 = prepare >>> first (/) >>> (/)
+
+prepare :: Int -> ((Int, Int), Int)
+prepare = double >>> (double >>> (double >>> first (const 100) >>> (*)) *** (double >>> second (const 5) >>> (-))) *** (double >>> second (const 2) >>> (+))
+-- prepare = double >>> (double >>> first (const 100) >>> (*)) *** (double >>> second (const 2) >>> (+))
+
+-- (x, (x, x))
+
+-- 100 x / (x - 5) (x + 2)
+
+-- f :: (() | (Int, Int)) -> String
+-- f = first (arr inc) >>> second fail >>>[Id] show
+-- f = right (first r) >>> first (right fail) >>> g >>>[Id] show
+
+-- f :: Maybe a b -> Id (() | (a, c)) (() | (b, c))
+-- f :: Maybe a b -> Maybe (a, c) (b, c)
+-- f = first[Id] >>> right[Id] >>> double >>> first[Id] (const[Id] (right (first r))) >>> (>>>)[Id] >>> double >>> second[Id] (const[Id] (l ||| (includeRight >>> left fst))) >>> (>>>)[Id]
+
+-- (() | (a, c)) right (first r)
+
+-- (() | (c, b))
+-- (() | (c, (() | a))) -> (() | (c, (() | b)))
+-- (() | (() | (c, b)))
+
+-- Id (() | a) (() | b) -> Id (() | (a, c)) (() | (b, c))
+-- Id ((() | a), c) ((() | b), c)
+-- Id (() | ((() | a), c)) (() | ((() | b), c))
+-- includeRight >>> left fst to front: Id (() | (a, c)) ((() | b), c)
+-- includeRight >>> left fst to back: Id (() | (a, c)) (() | (b, c))
+-- (() | (a, c)) -> ((() | a), c)
+
+-- type Parser a b = State String a (() | b)
+
+-- nextP :: Parser () Char
+-- nextP = snd >>> double >>> first isRight >>> choice >>> (const (l (), l ()) ||| ((head >>> r) &&& tail))
+
+-- aP :: Parser () ()
+-- aP = nextP >>> first (l ||| (double >>> const 'A' >>> arr (==) >>> boolToChoice))
+
+-- charP :: Parser Char ()
+-- charP = r *** (double >>> first (const ()) >>> nextP) >>> reorderToFront >>> first ((==) >>> boolToChoice)
+
+-- stringP :: (String, String) -> ((() | (((() | ())) | (String))), String)
+-- stringP = right[State s] (first[State s] charP >>> arr[State s] includeRight >>> left[State s] (const[State s] (l ())) >>> right[State s] (arr snd)) 
+
+-- stringP :: (String, String) -> ((() | ()), String)
+-- stringP = id |||[State s] (first[State s] charP >>> arr[State s] includeRight >>> (const[State s] (l ())) |||[State s] (arr snd >>> stringP))
+
+-- (() | (() | ()))
+-- (result, rest)
+-- (((), rest) | ((), rest))

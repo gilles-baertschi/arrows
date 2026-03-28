@@ -7,6 +7,8 @@ Options:
     -o, --output FILE       Specify the name of the final executable
     -e, --execute           Execute after compilation
     -d, --debug             Add debug symbols
+    -l, --llvm              Use the LLVM backend
+    -a, --ast               Output the abstract syntax tree
 
 Arguments:
     [FILE]                  File with the source-code

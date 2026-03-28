@@ -5,7 +5,7 @@ run :: () -> String
 run = const ((), (initial, (0, rules))) >>> execMachine >>>[Id] snd >>>[Id] show[Machine]
 
 instance Show Machine where
-   show = fst >>> (double >>> (reverse >>> boolListTo01) *** const "[" >>> (<>)) *** (fromRight >>> (double >>> (boolTo01 >>> double >>> second (const (l ())) >>> r) *** const "]" >>> (<>)) *** boolListTo01 >>> (<>)) >>> (<>) 
+   show = fst >>> (double >>> (reverse >>>[Id] boolListTo01) *** const "[" >>> (<>)) *** (fromRight >>> (double >>> (boolTo01 >>> double >>> second (const (l ())) >>> r) *** const "]" >>> (<>)) *** boolListTo01 >>> (<>)) >>> (<>) 
 
 boolListTo01 :: List Bool -> String
 boolListTo01 = double >>> first (const boolTo01) >>> map
